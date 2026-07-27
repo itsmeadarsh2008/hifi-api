@@ -1,5 +1,13 @@
 # hifi-api
 
+<div align="center">
+
+[![Deploy to Render](https://img.shields.io/badge/Deploy%20to-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://render.com/deploy?repo=https://github.com/itsmeadarsh2008/hifi-api)
+[![Deploy to Vercel](https://img.shields.io/badge/Deploy%20to-Vercel-000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https://github.com/itsmeadarsh2008/hifi-api)
+[![Deploy to Netlify](https://img.shields.io/badge/Deploy%20to-Netlify-00C7B7?style=for-the-badge&logo=netlify&logoColor=white)](https://app.netlify.com/start/deploy?repository=https://github.com/itsmeadarsh2008/hifi-api)
+
+</div>
+
 ![Running on BiniLossless.](https://sachinsenal0x64.github.io/picx-images-hosting/hifi.5fkz01pkwn.webp)
 
 <p align="center">Running on BiniLossless on <a href="https://tidal.qqdl.site/">qqdl.site</a>.</p>
