@@ -2,7 +2,7 @@ services:
   - type: web
     name: hifi-api
     runtime: image
-    repo: https://github.com/binimum/hifi-api
+    repo: https://github.com/itsmeadarsh2008/hifi-api
     plan: free
     envVars:
       - key: DATABASE_URL

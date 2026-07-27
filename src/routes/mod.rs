@@ -23,6 +23,6 @@ use crate::config::Config;
 pub fn index(config: &Config) -> Json<Value> {
     Json(json!({
         "version": config.api_version,
-        "Repo": "https://github.com/binimum/hifi-api"
+        "Repo": "https://github.com/itsmeadarsh2008/hifi-api"
     }))
 }

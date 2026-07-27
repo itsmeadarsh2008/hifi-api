@@ -120,7 +120,7 @@ None.
 ```json
 {
   "version": "2.x",
-  "Repo": "https://github.com/binimum/hifi-api"
+  "Repo": "https://github.com/itsmeadarsh2008/hifi-api"
 }
 ```
 
