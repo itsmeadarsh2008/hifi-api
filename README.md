@@ -27,6 +27,9 @@ This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences
 | **Performance** | Interpreted, GIL-bound | Compiled, zero-cost abstractions |
 | **Memory** | ~100-200 MB idle | ~5-15 MB idle |
 | **Startup time** | ~2-5 seconds (import overhead) | ~100ms (compiled binary) |
+| **Concurrent connections** | ~50-100 per instance (async Python, GIL-bound) | ~5,000-10,000 concurrent tasks per instance (tokio M:N threading, no GIL)¹ |
+| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate), per-account governor rate limiters, request jitter (±20%), staggered token refresh, automatic 429/401 rotation |
+| **Request distribution** | Full requests, one account at a time | Traffic split into smaller chunks across accounts — each account serves fewer requests per minute, reducing Tidal's rate-limit triggers |
 | **Token cache** | In-memory dict | moka (TTL-aware, bounded) |
 | **Rate limiter** | Custom sleep-based | governor (GCRA algorithm) |
 | **Auth flow** | Separate Python script (tidal_auth.py) | Built-in OAuth device flow (`AUTO_SETUP=true`) |
