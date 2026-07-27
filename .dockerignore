@@ -1,0 +1,7 @@
+target/
+.git/
+*.md
+.env
+token.json
+proxies.txt
+tidal_auth/

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: hifi-api
+    runtime: image
+    repo: https://github.com/binimum/hifi-api
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        value: /data/hifi.db
+      - key: ADMIN_KEY
+        sync: false
+      - key: COUNTRY_CODE
+        value: US
+      - key: RUST_LOG
+        value: info
+      - key: AUTO_SETUP
+        value: "true"
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

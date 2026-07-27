@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "Dockerfile",
+      "use": "@vercel/docker"
+    }
+  ],
+  "env": {
+    "DATABASE_URL": "",
+    "COUNTRY_CODE": "US",
+    "RUST_LOG": "info"
+  }
+}

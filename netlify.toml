@@ -1,0 +1,13 @@
+[build]
+  publish = "."
+
+[build.environment]
+  DATABASE_URL = ""
+  COUNTRY_CODE = "US"
+  RUST_LOG = "info"
+
+[[services]]
+  name = "hifi-api"
+  type = "docker"
+  dockerfile = "Dockerfile"
+  port = 8000
