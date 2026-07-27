@@ -4,7 +4,27 @@
 
 <p align="center">Running on BiniLossless on <a href="https://tidal.qqdl.site/">qqdl.site</a>.</p>
 
-`hifi-api` is a Rust port of the original [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi) project — a Tidal Music Proxy with intelligent multi-account switching, secure admin panel, and anti-ban rate limiting.
+`hifi-api` is a Rust port of the original [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi) / [binimum/hifi-api](https://github.com/binimum/hifi-api) project — a Tidal Music Proxy with intelligent multi-account switching, secure admin panel, and anti-ban rate limiting.
+
+## What's different from binimum/hifi-api?
+
+This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences:
+
+| Aspect | binimum/hifi-api (Python) | this (Rust) |
+|--------|--------------------------|-------------|
+| **Language** | Python 3 | Rust |
+| **Framework** | FastAPI + Uvicorn | Axum 0.8 |
+| **HTTP client** | httpx | reqwest (HTTP/2, connection pooling) |
+| **Database** | Optional SQLite via aiosqlite | SQLite via sqlx with inline migrations |
+| **Performance** | Interpreted, GIL-bound | Compiled, zero-cost abstractions |
+| **Memory** | ~100-200 MB idle | ~5-15 MB idle |
+| **Startup time** | ~2-5 seconds (import overhead) | ~100ms (compiled binary) |
+| **Token cache** | In-memory dict | moka (TTL-aware, bounded) |
+| **Rate limiter** | Custom sleep-based | governor (GCRA algorithm) |
+| **Auth flow** | Separate Python script (tidal_auth.py) | Built-in OAuth device flow (`AUTO_SETUP=true`) |
+| **Admin panel** | External SPA | Embedded single HTML file (rust-embed) |
+| **Concurrency** | asyncio event loop | tokio multi-threaded runtime |
+| **Deployment** | Python interpreter required | Single static binary, Docker optional |
 
 > [!IMPORTANT]
 > Music piracy is illegal in most countries. This project is intended for use with a valid Tidal account for educational purposes (for example, in your homelab). I won't provide support for people hosting this API on the open internet.
