@@ -4,7 +4,7 @@
 
 <p align="center">Running on BiniLossless on <a href="https://tidal.qqdl.site/">qqdl.site</a>.</p>
 
-`hifi-api` is forked from the original project [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi).
+`hifi-api` is a Rust port of the original [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi) project — a Tidal Music Proxy with intelligent multi-account switching, secure admin panel, and anti-ban rate limiting.
 
 > [!IMPORTANT]
 > Music piracy is illegal in most countries. This project is intended for use with a valid Tidal account for educational purposes (for example, in your homelab). I won't provide support for people hosting this API on the open internet.
@@ -12,33 +12,86 @@
 > [!WARNING]
 > Tidal has begun blocking accounts en masse starting from around now - not only users using this API but also other providers such as lucide.to. There is currently no solution for this - this includes homelab users who don't expose their API to the Internet.
 
-## Setup
+## Quick Start
 
-Run `pip install -r requirements.txt` in `tidal_auth/`, then run `tidal_auth/tidal_auth.py` and follow the instructions. The script creates/updates `token.json`.
+```bash
+# 1. Copy and edit config
+cp .env.example .env
 
-Install main API dependencies with `pip install -r requirements.txt` in the project root.
+# 2. Run (auto-setup will prompt you to authorize via browser)
+cargo run
+```
+
+On first boot with no accounts, the app prints a URL. Open it in your browser, log into Tidal, and the account is added automatically.
+
+### Add accounts manually (alternative)
+
+Set env vars in `.env`:
+
+```env
+CLIENT_ID=lw3vR6GE1vtNBsjv
+CLIENT_SECRET=Y8tIpqKJxs9BEIwYr0I9bSbMWDsogXJx9LaN3mCHwD4%3D
+REFRESH_TOKEN=<your_refresh_token>
+```
+
+The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. You only need to provide your `REFRESH_TOKEN`.
 
 ### Configuration
 
-You can configure the application using environment variables or an `.env` file. See `.env.example` for a template.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `hifi.db` | SQLite path (`ephemeral` for serverless) |
+| `ADMIN_KEY` | (none) | Admin panel auth (empty = open) |
+| `COUNTRY_CODE` | `US` | Tidal region code |
+| `AUTO_SETUP` | `false` | Enable auto-OAuth-setup on first boot |
+| `USE_PROXIES` | `false` | Enable proxy rotation |
+| `PROXIES_FILE` | `proxies.txt` | Proxy list (one per line) |
+| `MAX_RETRIES` | `2` | Retry count on proxy failure |
+| `RUST_LOG` | `info` | Log level |
 
-**Proxy Configuration:**
-- `USE_PROXIES` (default: `False`): Set to `True` to enable proxy support.
-- `PROXIES_FILE` (default: `proxies.txt`): Path to a text file containing a list of proxies (one per line). Format: `http(s)://user:pass@hostname:port`
-- `ROTATE_PROXIES_ON_REFRESH` (default: `False`): Set to `True` to rotate to a new proxy when refreshing the Tidal token.
-- `MAX_RETRIES` (default: `2`): Number of times to retry a request with a new proxy if the current one fails.
-- `FALLBACK_TO_DIRECT_CONNECTION` (default: `False`): **WARNING:** If set to `True`, the app will expose the host IP if all proxies fail or `proxies.txt` is misconfigured.
+## Deployment
 
-Run the server with:
+### Render (recommended)
+
+Push to GitHub and create a new **Web Service**:
+
+1. Connect your repo
+2. Set runtime to **Docker**
+3. Set env vars (`DATABASE_URL=/data/hifi.db`, `ADMIN_KEY`, `AUTO_SETUP=true`)
+4. Add a **Disk** mount at `/data` (1 GB)
+
+### Fly.io
 
 ```bash
-python3 main.py
+fly launch --dockerfile Dockerfile
+fly secrets set ADMIN_KEY=<secret> AUTO_SETUP=true
+fly volume create data --size 1
+fly deploy
 ```
 
-By default, it listens on `0.0.0.0:8000` (could be the open internet - beware!).
+### Railway
 
-> [!IMPORTANT]
-> Make sure your `token.json` is in the folder that you RUN the script (do not just double click the script) - or place your creds into `.env`.
+Connect repo → Railway auto-detects `railway.json` and `Dockerfile`. Set env vars in the dashboard.
+
+### Vercel / Netlify
+
+Docker-based deployment is supported via `vercel.json` / `netlify.toml`. Note that these platforms are designed for serverless — for a persistent SQLite-backed service, **Render** or **Fly.io** are recommended.
+
+### Docker (any host)
+
+```bash
+docker build -t hifi-api .
+docker run -d -p 8000:8000 \
+  -v hifi-data:/data \
+  -e DATABASE_URL=/data/hifi.db \
+  -e ADMIN_KEY=changeme \
+  -e AUTO_SETUP=true \
+  hifi-api
+```
+
+### Admin Panel
+
+Access at `/admin`. If `ADMIN_KEY` is set, include the header `X-Admin-Key: <your_key>`. When empty, the panel is open.
 
 ## Notes
 
