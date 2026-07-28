@@ -60,6 +60,8 @@ button[type="submit"]:hover { background:#2ea043; }
 <script>
 const API = window.location.origin;
 let adminKey = localStorage.getItem('admin_key') || '';
+let editId = null;
+let editData = null;
 
 function setKey() {
     const k = prompt('Enter admin key:', adminKey);
@@ -69,22 +71,51 @@ if (!adminKey) setKey();
 
 const headers = () => ({ 'Content-Type': 'application/json', ...(adminKey ? { 'X-Admin-Key': adminKey } : {}) });
 
-function statusClass(account) {
+function statusClass(a) {
     const now = Math.floor(Date.now() / 1000);
-    if (!account.is_active) return 'status-err';
-    if (account.rate_limited_until > now) return 'status-warn';
+    if (!a.is_active) return 'status-err';
+    if (a.rate_limited_until > now) return 'status-warn';
     return 'status-ok';
 }
 
 function timeStr(ts) {
     if (!ts || ts === 0) return '-';
     const d = new Date(ts * 1000);
-    const now = new Date();
-    const diff = d - now;
+    const diff = d - new Date();
     if (diff < 0) return 'expired';
     const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m`;
-    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+    if (mins < 60) return mins + 'm';
+    return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
+}
+
+function startEdit(id) {
+    editId = id;
+    const a = window._accounts.find(x => x.id === id);
+    if (a) editData = { label: a.label, client_id: a.client_id, client_secret: a.client_secret, refresh_token: a.refresh_token };
+    fetchData();
+}
+
+async function saveEdit(id) {
+    const body = {
+        label: document.getElementById('ed-label').value,
+        client_id: document.getElementById('ed-client-id').value,
+        client_secret: document.getElementById('ed-client-secret').value,
+        refresh_token: document.getElementById('ed-refresh-token').value,
+    };
+    try {
+        const res = await fetch('/admin/accounts/' + id, {
+            method: 'PATCH', headers: headers(), body: JSON.stringify(body)
+        });
+        if (res.ok) {
+            editId = null; editData = null;
+            fetchData();
+        } else {
+            const d = await res.json();
+            document.getElementById('error').textContent = d.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
 }
 
 async function fetchData() {
@@ -96,6 +127,7 @@ async function fetchData() {
         if (statsRes.status === 401 || accountsRes.status === 401) { setKey(); return; }
         const stats = await statsRes.json();
         const accounts = await accountsRes.json();
+        window._accounts = accounts.accounts;
 
         document.getElementById('stats').innerHTML = `
             <div class="stat-card"><div class="label">Total Requests</div><div class="value">${stats.total_requests}</div></div>
@@ -104,26 +136,39 @@ async function fetchData() {
             <div class="stat-card"><div class="label">Rate Limited</div><div class="value">${stats.rate_limited_accounts}</div></div>
         `;
 
-        document.getElementById('accounts-tbody').innerHTML = accounts.accounts.map(a => `
-            <tr>
-                <td>${a.label || a.id.slice(0, 8)}</td>
-                <td>${a.user_id || '-'}</td>
-                <td><span class="status-dot ${statusClass(a)}"></span>${a.is_active ? 'Active' : 'Inactive'}</td>
-                <td>${a.request_count}</td>
-                <td>${a.error_count}</td>
-                <td>${timeStr(a.rate_limited_until)}</td>
-                <td>${timeStr(a.token_expires_at)}</td>
-                <td>
-                    <button class="toggle-btn ${a.is_active ? 'active' : ''}" onclick="toggleAccount('${a.id}', ${!a.is_active})">
-                        ${a.is_active ? 'ON' : 'OFF'}
-                    </button>
-                    <button class="toggle-btn" onclick="removeAccount('${a.id}')">Delete</button>
-                </td>
-            </tr>
-        `).join('');
+        document.getElementById('accounts-tbody').innerHTML = accounts.accounts.map(a => {
+            const editing = editId === a.id;
+
+            if (editing && !editData) {
+                editData = { label: a.label, client_id: a.client_id, client_secret: a.client_secret, refresh_token: a.refresh_token };
+            }
+
+            return '<tr>' +
+                '<td>' + (editing ? '<input type="text" id="ed-label" value="' + htmlEsc(editData.label) + '" style="width:100%" placeholder="Label">' : (htmlEsc(a.label) || a.id.slice(0, 8))) + '</td>' +
+                '<td>' + (editing ? '' : htmlEsc(a.user_id || '-')) + '</td>' +
+                '<td>' + (editing ? '<input type="text" id="ed-client-id" value="' + htmlEsc(editData.client_id) + '" style="width:100%" placeholder="Client ID">' : '<span class="status-dot ' + statusClass(a) + '"></span>' + (a.is_active ? 'Active' : 'Inactive')) + '</td>' +
+                '<td>' + (editing ? '<input type="password" id="ed-client-secret" value="' + htmlEsc(editData.client_secret) + '" style="width:100%" placeholder="Client Secret">' : a.request_count) + '</td>' +
+                '<td>' + (editing ? '<input type="password" id="ed-refresh-token" value="' + htmlEsc(editData.refresh_token) + '" style="width:100%" placeholder="Refresh Token">' : a.error_count) + '</td>' +
+                '<td>' + timeStr(a.rate_limited_until) + '</td>' +
+                '<td>' + timeStr(a.token_expires_at) + '</td>' +
+                '<td>' +
+                    (editing
+                        ? '<button class="toggle-btn" onclick="saveEdit(\'' + a.id + '\')">Save</button>' +
+                          '<button class="toggle-btn" onclick="editId=null;editData=null;fetchData()">Cancel</button>'
+                        : '<button class="toggle-btn" onclick="startEdit(\'' + a.id + '\')">Edit</button>' +
+                          '<button class="toggle-btn' + (a.is_active ? ' active' : '') + '" onclick="toggleAccount(\'' + a.id + '\',' + (!a.is_active) + ')">' + (a.is_active ? 'ON' : 'OFF') + '</button>' +
+                          '<button class="toggle-btn" onclick="removeAccount(\'' + a.id + '\')">Delete</button>'
+                    ) +
+                '</td></tr>';
+        }).join('');
     } catch(e) {
         document.getElementById('error').textContent = 'Failed to fetch data: ' + e.message;
     }
+}
+
+function htmlEsc(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 async function toggleAccount(id, active) {

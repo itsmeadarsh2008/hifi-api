@@ -15,7 +15,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::Method;
 use axum::middleware;
-use axum::routing::{any, delete, get, post, put};
+use axum::routing::{any, get, patch, post, put};
 use axum::{Json, Router};
 use reqwest::Client;
 use serde_json::Value;
@@ -192,7 +192,7 @@ async fn main() {
 fn admin_api(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/accounts", get(crate::admin::accounts::list_accounts).post(crate::admin::accounts::add_account))
-        .route("/accounts/{id}", delete(crate::admin::accounts::remove_account))
+        .route("/accounts/{id}", patch(crate::admin::accounts::update_account).delete(crate::admin::accounts::remove_account))
         .route("/accounts/{id}/toggle", put(crate::admin::accounts::toggle_account))
         .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
         .route("/stats", get(crate::admin::stats::get_stats))

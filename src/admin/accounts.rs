@@ -29,6 +29,9 @@ pub async fn list_accounts(
             json!({
                 "id": a.id,
                 "label": a.label,
+                "client_id": a.client_id,
+                "client_secret": a.client_secret,
+                "refresh_token": a.refresh_token,
                 "user_id": futures::executor::block_on(async { a.user_id.read().await.clone() }),
                 "is_active": a.is_active.load(std::sync::atomic::Ordering::Relaxed),
                 "request_count": a.request_count.load(std::sync::atomic::Ordering::Relaxed),
@@ -74,6 +77,32 @@ pub async fn remove_account(
 ) -> Result<Json<Value>, AppError> {
     state.account_manager.remove_account(&id).await?;
     Ok(Json(json!({ "message": "Account removed" })))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateAccountRequest {
+    pub label: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub refresh_token: Option<String>,
+}
+
+pub async fn update_account(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateAccountRequest>,
+) -> Result<Json<Value>, AppError> {
+    state
+        .account_manager
+        .update_account(
+            &id,
+            body.label,
+            body.client_id,
+            body.client_secret,
+            body.refresh_token,
+        )
+        .await?;
+    Ok(Json(json!({ "message": "Account updated" })))
 }
 
 pub async fn toggle_account(

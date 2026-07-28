@@ -298,6 +298,58 @@ impl AccountManager {
         }
     }
 
+    pub async fn update_account(
+        &self,
+        id: &str,
+        label: Option<String>,
+        client_id: Option<String>,
+        client_secret: Option<String>,
+        refresh_token: Option<String>,
+    ) -> Result<(), AppError> {
+        let mut accounts = self.accounts.write().await;
+        let idx = accounts.iter().position(|a| a.id == id).ok_or_else(|| {
+            AppError::NotFound(format!("Account {} not found", id))
+        })?;
+
+        let old = &accounts[idx];
+        let new_label = label.unwrap_or_else(|| old.label.clone());
+        let new_client_id = client_id.unwrap_or_else(|| old.client_id.clone());
+        let new_client_secret = client_secret.unwrap_or_else(|| old.client_secret.clone());
+        let new_refresh_token = refresh_token.unwrap_or_else(|| old.refresh_token.clone());
+
+        let new_user_id = old.user_id.read().await.clone();
+        let new_notes = old.notes.read().await.clone();
+
+        let updated = Arc::new(AccountState::new(
+            old.id.clone(),
+            new_label,
+            new_client_id,
+            new_client_secret,
+            new_refresh_token,
+            new_user_id,
+            old.is_active.load(Ordering::Relaxed),
+            new_notes,
+        ));
+
+        if let Some(db) = &self.db {
+            let now = Utc::now().timestamp();
+            sqlx::query(
+                "UPDATE accounts SET label = ?, client_id = ?, client_secret = ?, refresh_token = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(&updated.label)
+            .bind(&updated.client_id)
+            .bind(&updated.client_secret)
+            .bind(&updated.refresh_token)
+            .bind(now)
+            .bind(&old.id)
+            .execute(db)
+            .await?;
+        }
+
+        accounts[idx] = updated;
+        Ok(())
+    }
+
     pub async fn set_account_active(&self, id: &str, active: bool) -> Result<(), AppError> {
         if let Some(account) = self.get_account_by_id(id).await {
             account.is_active.store(active, Ordering::Relaxed);
