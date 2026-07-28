@@ -174,14 +174,10 @@ async fn main() {
         .route("/topvideos/", get(routes::topvideos::get_top_videos))
         .route("/video/", get(routes::video::get_video))
         .route("/health", get(routes::health::health))
-        // Admin routes (auth-protected)
+        // Admin SPA (no auth — the SPA handles auth in-browser)
         .route("/admin", get(crate::admin::ui::admin_index))
-        .route("/admin/accounts", get(crate::admin::accounts::list_accounts).post(crate::admin::accounts::add_account))
-        .route("/admin/accounts/{id}", delete(crate::admin::accounts::remove_account))
-        .route("/admin/accounts/{id}/toggle", put(crate::admin::accounts::toggle_account))
-        .route("/admin/accounts/{id}/test", post(crate::admin::accounts::test_account))
-        .route("/admin/stats", get(crate::admin::stats::get_stats))
-        .layer(middleware::from_fn_with_state(state.clone(), crate::admin::admin_auth))
+        // Admin API routes (auth-protected)
+        .nest("/admin", admin_api(state.clone()))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -191,6 +187,16 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+fn admin_api(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/accounts", get(crate::admin::accounts::list_accounts).post(crate::admin::accounts::add_account))
+        .route("/accounts/{id}", delete(crate::admin::accounts::remove_account))
+        .route("/accounts/{id}/toggle", put(crate::admin::accounts::toggle_account))
+        .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
+        .route("/stats", get(crate::admin::stats::get_stats))
+        .layer(middleware::from_fn_with_state(state, crate::admin::admin_auth))
 }
 
 async fn index(
