@@ -111,6 +111,7 @@ pub async fn run_setup(
             REQUEST_CLIENT_ID.to_string(),
             REQUEST_CLIENT_SECRET.to_string(),
             refresh_token,
+            Some(user_id.to_string()),
         )
         .await?;
 

@@ -154,6 +154,7 @@ impl AccountManager {
         client_id: String,
         client_secret: String,
         refresh_token: String,
+        user_id: Option<String>,
     ) -> Result<Arc<AccountState>, AppError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
@@ -163,7 +164,7 @@ impl AccountManager {
             client_id.clone(),
             client_secret.clone(),
             refresh_token.clone(),
-            None,
+            user_id,
             true,
             String::new(),
         ));
@@ -305,6 +306,7 @@ impl AccountManager {
         client_id: Option<String>,
         client_secret: Option<String>,
         refresh_token: Option<String>,
+        user_id: Option<String>,
     ) -> Result<(), AppError> {
         let mut accounts = self.accounts.write().await;
         let idx = accounts.iter().position(|a| a.id == id).ok_or_else(|| {
@@ -316,8 +318,8 @@ impl AccountManager {
         let new_client_id = client_id.unwrap_or_else(|| old.client_id.clone());
         let new_client_secret = client_secret.unwrap_or_else(|| old.client_secret.clone());
         let new_refresh_token = refresh_token.unwrap_or_else(|| old.refresh_token.clone());
-
-        let new_user_id = old.user_id.read().await.clone();
+        let current_user_id = old.user_id.read().await.clone();
+        let new_user_id = user_id.or(current_user_id);
         let new_notes = old.notes.read().await.clone();
 
         let updated = Arc::new(AccountState::new(
@@ -326,7 +328,7 @@ impl AccountManager {
             new_client_id,
             new_client_secret,
             new_refresh_token,
-            new_user_id,
+            new_user_id.clone(),
             old.is_active.load(Ordering::Relaxed),
             new_notes,
         ));
@@ -334,12 +336,13 @@ impl AccountManager {
         if let Some(db) = &self.db {
             let now = Utc::now().timestamp();
             sqlx::query(
-                "UPDATE accounts SET label = ?, client_id = ?, client_secret = ?, refresh_token = ?, updated_at = ? WHERE id = ?",
+                "UPDATE accounts SET label = ?, client_id = ?, client_secret = ?, refresh_token = ?, user_id = ?, updated_at = ? WHERE id = ?",
             )
             .bind(&updated.label)
             .bind(&updated.client_id)
             .bind(&updated.client_secret)
             .bind(&updated.refresh_token)
+            .bind(&new_user_id)
             .bind(now)
             .bind(&old.id)
             .execute(db)

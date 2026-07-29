@@ -131,8 +131,15 @@ impl TidalClient {
                                 req2 = req2.query(&p);
                             }
                             let resp2 = req2.send().await?;
-                            if resp2.status().is_success() {
-                                let data: Value = resp2.json().await?;
+                            let status2 = resp2.status();
+                            if status2.is_success() {
+                                let body2 = resp2.text().await?;
+                                let data: Value = serde_json::from_str(&body2)
+                                    .map_err(|e| AppError::UpstreamError(
+                                        status2,
+                                        format!("Failed to parse Tidal response: {} | body: {}",
+                                            e, body2.chars().take(200).collect::<String>()),
+                                    ))?;
                                 return Ok(json!({"version": self.config.api_version, "data": data}));
                             }
                         }
@@ -179,7 +186,13 @@ impl TidalClient {
                 }
             }
 
-            let data: Value = resp.json().await?;
+            let body = resp.text().await?;
+            let data: Value = serde_json::from_str(&body)
+                .map_err(|e| AppError::UpstreamError(
+                    status,
+                    format!("Failed to parse Tidal response: {} | body: {}",
+                        e, body.chars().take(200).collect::<String>()),
+                ))?;
 
             if url.contains("playbackinfo") || url.contains("trackManifests") {
                 return Ok(json!({"version": self.config.api_version, "data": data}));
@@ -220,7 +233,13 @@ impl TidalClient {
             return Err(AppError::UpstreamError(status, "Upstream API error".into()));
         }
 
-        let data: Value = resp.json().await?;
+        let body = resp.text().await?;
+        let data: Value = serde_json::from_str(&body)
+            .map_err(|e| AppError::UpstreamError(
+                status,
+                format!("Failed to parse Tidal response: {} | body: {}",
+                    e, body.chars().take(200).collect::<String>()),
+            ))?;
         Ok(data)
     }
 }

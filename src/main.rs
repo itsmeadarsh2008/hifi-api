@@ -68,6 +68,7 @@ async fn main() {
     };
 
     let http_client = Client::builder()
+        .gzip(true)
         .http2_prior_knowledge()
         .http2_adaptive_window(true)
         .pool_max_idle_per_host(500)
@@ -95,12 +96,14 @@ async fn main() {
             } else {
                 env_client_secret
             };
+            let env_user_id = std::env::var("USER_ID").ok();
             match account_manager
                 .add_account(
                     "Default Account (env)".into(),
                     env_client_id,
                     client_secret,
                     env_refresh_token,
+                    env_user_id,
                 )
                 .await
             {

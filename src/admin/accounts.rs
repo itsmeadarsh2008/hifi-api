@@ -12,6 +12,7 @@ pub struct AddAccountRequest {
     pub client_id: String,
     pub client_secret: String,
     pub refresh_token: String,
+    pub user_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +60,7 @@ pub async fn add_account(
             body.client_id,
             body.client_secret,
             body.refresh_token,
+            body.user_id,
         )
         .await?;
 
@@ -85,6 +87,7 @@ pub struct UpdateAccountRequest {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub refresh_token: Option<String>,
+    pub user_id: Option<String>,
 }
 
 pub async fn update_account(
@@ -100,6 +103,7 @@ pub async fn update_account(
             body.client_id,
             body.client_secret,
             body.refresh_token,
+            body.user_id,
         )
         .await?;
     Ok(Json(json!({ "message": "Account updated" })))
