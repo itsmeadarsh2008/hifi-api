@@ -26,7 +26,7 @@ td { padding:10px 12px; border-top:1px solid #30363d; font-size:14px; }
 .status-ok { background:#3fb950; }
 .status-warn { background:#d29922; }
 .status-err { background:#f85149; }
-.toggle-btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:12px; }
+.toggle-btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:12px; white-space:nowrap; }
 .toggle-btn:hover { background:#30363d; }
 .toggle-btn.active { background:#1f6feb; border-color:#1f6feb; }
 .form-section { background:#161b22; border:1px solid #30363d; border-radius:6px; padding:16px; margin-top:16px; }
@@ -36,6 +36,13 @@ button[type="submit"] { background:#238636; color:#fff; border:none; padding:8px
 button[type="submit"]:hover { background:#2ea043; }
 .error { color:#f85149; margin-top:8px; }
 .success { color:#3fb950; margin-top:8px; }
+.overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; }
+.overlay.open { display:flex; align-items:center; justify-content:center; }
+.modal { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:24px; width:480px; max-width:90vw; max-height:90vh; overflow-y:auto; }
+.modal h3 { margin-bottom:16px; color:#f0f6fc; }
+.modal label { display:block; font-size:12px; color:#8b949e; margin-bottom:4px; margin-top:12px; }
+.modal label:first-of-type { margin-top:0; }
+.modal .modal-actions { display:flex; gap:8px; margin-top:16px; }
 </style>
 </head>
 <body>
@@ -57,19 +64,39 @@ button[type="submit"]:hover { background:#2ea043; }
 <button onclick="addAccount()">Add Account</button>
 </div>
 </div>
+
+<div id="editOverlay" class="overlay" onclick="if(event.target===this)closeEdit()">
+<div class="modal">
+<h3 id="editTitle">Edit Account</h3>
+<label>Label</label>
+<input type="text" id="ed-label">
+<label>Client ID</label>
+<input type="text" id="ed-client-id">
+<label>Client Secret</label>
+<input type="password" id="ed-client-secret">
+<label>Refresh Token</label>
+<input type="password" id="ed-refresh-token">
+<div class="modal-actions">
+<button class="toggle-btn" onclick="saveEdit()" style="background:#238636;color:#fff">Save</button>
+<button class="toggle-btn" onclick="closeEdit()">Cancel</button>
+</div>
+</div>
+</div>
+
 <script>
 const API = window.location.origin;
 let adminKey = localStorage.getItem('admin_key') || '';
 let editId = null;
-let editData = null;
+
+function headers() {
+    return { 'Content-Type': 'application/json', ...(adminKey ? { 'X-Admin-Key': adminKey } : {}) };
+}
 
 function setKey() {
     const k = prompt('Enter admin key:', adminKey);
     if (k) { adminKey = k; localStorage.setItem('admin_key', k); fetchData(); }
 }
 if (!adminKey) setKey();
-
-const headers = () => ({ 'Content-Type': 'application/json', ...(adminKey ? { 'X-Admin-Key': adminKey } : {}) });
 
 function statusClass(a) {
     const now = Math.floor(Date.now() / 1000);
@@ -88,14 +115,26 @@ function timeStr(ts) {
     return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
 }
 
-function startEdit(id) {
+function openEdit(id) {
     editId = id;
     const a = window._accounts.find(x => x.id === id);
-    if (a) editData = { label: a.label, client_id: a.client_id, client_secret: a.client_secret, refresh_token: a.refresh_token };
-    fetchData();
+    if (!a) return;
+    document.getElementById('ed-label').value = a.label || '';
+    document.getElementById('ed-client-id').value = a.client_id || '';
+    document.getElementById('ed-client-secret').value = a.client_secret || '';
+    document.getElementById('ed-refresh-token').value = a.refresh_token || '';
+    document.getElementById('editTitle').textContent = 'Edit ' + (a.label || a.id.slice(0, 8));
+    document.getElementById('editOverlay').classList.add('open');
 }
 
-async function saveEdit(id) {
+function closeEdit() {
+    editId = null;
+    document.getElementById('editOverlay').classList.remove('open');
+}
+
+async function saveEdit() {
+    const id = editId;
+    if (!id) return;
     const body = {
         label: document.getElementById('ed-label').value,
         client_id: document.getElementById('ed-client-id').value,
@@ -107,7 +146,7 @@ async function saveEdit(id) {
             method: 'PATCH', headers: headers(), body: JSON.stringify(body)
         });
         if (res.ok) {
-            editId = null; editData = null;
+            closeEdit();
             fetchData();
         } else {
             const d = await res.json();
@@ -125,40 +164,52 @@ async function fetchData() {
             fetch('/admin/accounts', { headers: headers() })
         ]);
         if (statsRes.status === 401 || accountsRes.status === 401) { setKey(); return; }
-        const stats = await statsRes.json();
-        const accounts = await accountsRes.json();
+
+        if (!statsRes.ok) {
+            var text = await statsRes.text();
+            document.getElementById('error').textContent = 'Stats API: ' + (statsRes.status) + ' ' + text.slice(0, 200);
+            return;
+        }
+        if (!accountsRes.ok) {
+            var text = await accountsRes.text();
+            document.getElementById('error').textContent = 'Accounts API: ' + (accountsRes.status) + ' ' + text.slice(0, 200);
+            return;
+        }
+
+        var statsText = await statsRes.text();
+        var accountsText = await accountsRes.text();
+        var stats, accounts;
+        try { stats = JSON.parse(statsText); } catch(e) { document.getElementById('error').textContent = 'Stats parse error: ' + statsText.slice(0, 200); return; }
+        try { accounts = JSON.parse(accountsText); } catch(e) { document.getElementById('error').textContent = 'Accounts parse error: ' + accountsText.slice(0, 200); return; }
         window._accounts = accounts.accounts;
 
-        document.getElementById('stats').innerHTML = `
-            <div class="stat-card"><div class="label">Total Requests</div><div class="value">${stats.total_requests}</div></div>
-            <div class="stat-card"><div class="label">Error Rate</div><div class="value">${stats.error_rate}</div></div>
-            <div class="stat-card"><div class="label">Active</div><div class="value">${stats.healthy_accounts}/${stats.total_accounts}</div></div>
-            <div class="stat-card"><div class="label">Rate Limited</div><div class="value">${stats.rate_limited_accounts}</div></div>
-        `;
+        document.getElementById('stats').innerHTML = [
+            '<div class="stat-card"><div class="label">Total Requests</div><div class="value">' + stats.total_requests + '</div></div>',
+            '<div class="stat-card"><div class="label">Error Rate</div><div class="value">' + (stats.error_rate || '0.00%') + '</div></div>',
+            '<div class="stat-card"><div class="label">Active</div><div class="value">' + (stats.healthy_accounts || 0) + '/' + (stats.total_accounts || 0) + '</div></div>',
+            '<div class="stat-card"><div class="label">Rate Limited</div><div class="value">' + (stats.rate_limited_accounts || 0) + '</div></div>'
+        ].join('');
 
-        document.getElementById('accounts-tbody').innerHTML = accounts.accounts.map(a => {
-            const editing = editId === a.id;
-
-            if (editing && !editData) {
-                editData = { label: a.label, client_id: a.client_id, client_secret: a.client_secret, refresh_token: a.refresh_token };
-            }
+        document.getElementById('accounts-tbody').innerHTML = accounts.accounts.map(function(a) {
+            var label = a.label || a.id.slice(0, 8);
+            var userId = a.user_id || '-';
+            var statusDot = 'status-dot ' + statusClass(a);
+            var statusText = a.is_active ? 'Active' : 'Inactive';
+            var activeClass = a.is_active ? ' active' : '';
+            var toggleText = a.is_active ? 'ON' : 'OFF';
 
             return '<tr>' +
-                '<td>' + (editing ? '<input type="text" id="ed-label" value="' + htmlEsc(editData.label) + '" style="width:100%" placeholder="Label">' : (htmlEsc(a.label) || a.id.slice(0, 8))) + '</td>' +
-                '<td>' + (editing ? '' : htmlEsc(a.user_id || '-')) + '</td>' +
-                '<td>' + (editing ? '<input type="text" id="ed-client-id" value="' + htmlEsc(editData.client_id) + '" style="width:100%" placeholder="Client ID">' : '<span class="status-dot ' + statusClass(a) + '"></span>' + (a.is_active ? 'Active' : 'Inactive')) + '</td>' +
-                '<td>' + (editing ? '<input type="password" id="ed-client-secret" value="' + htmlEsc(editData.client_secret) + '" style="width:100%" placeholder="Client Secret">' : a.request_count) + '</td>' +
-                '<td>' + (editing ? '<input type="password" id="ed-refresh-token" value="' + htmlEsc(editData.refresh_token) + '" style="width:100%" placeholder="Refresh Token">' : a.error_count) + '</td>' +
+                '<td>' + esc(label) + '</td>' +
+                '<td>' + esc(userId) + '</td>' +
+                '<td><span class="' + statusDot + '"></span>' + statusText + '</td>' +
+                '<td>' + a.request_count + '</td>' +
+                '<td>' + a.error_count + '</td>' +
                 '<td>' + timeStr(a.rate_limited_until) + '</td>' +
                 '<td>' + timeStr(a.token_expires_at) + '</td>' +
-                '<td>' +
-                    (editing
-                        ? '<button class="toggle-btn" onclick="saveEdit(\'' + a.id + '\')">Save</button>' +
-                          '<button class="toggle-btn" onclick="editId=null;editData=null;fetchData()">Cancel</button>'
-                        : '<button class="toggle-btn" onclick="startEdit(\'' + a.id + '\')">Edit</button>' +
-                          '<button class="toggle-btn' + (a.is_active ? ' active' : '') + '" onclick="toggleAccount(\'' + a.id + '\',' + (!a.is_active) + ')">' + (a.is_active ? 'ON' : 'OFF') + '</button>' +
-                          '<button class="toggle-btn" onclick="removeAccount(\'' + a.id + '\')">Delete</button>'
-                    ) +
+                '<td nowrap>' +
+                    '<button class="toggle-btn" onclick="openEdit(\'' + a.id + '\')">Edit</button> ' +
+                    '<button class="toggle-btn' + activeClass + '" onclick="toggleAccount(\'' + a.id + '\',' + (!a.is_active) + ')">' + toggleText + '</button> ' +
+                    '<button class="toggle-btn" onclick="removeAccount(\'' + a.id + '\')">Delete</button>' +
                 '</td></tr>';
         }).join('');
     } catch(e) {
@@ -166,9 +217,8 @@ async function fetchData() {
     }
 }
 
-function htmlEsc(s) {
-    if (!s) return '';
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function esc(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 async function toggleAccount(id, active) {
@@ -197,10 +247,10 @@ async function removeAccount(id) {
 }
 
 async function addAccount() {
-    const label = document.getElementById('new-label').value;
-    const client_id = document.getElementById('new-client-id').value;
-    const client_secret = document.getElementById('new-client-secret').value;
-    const refresh_token = document.getElementById('new-refresh-token').value;
+    var label = document.getElementById('new-label').value;
+    var client_id = document.getElementById('new-client-id').value;
+    var client_secret = document.getElementById('new-client-secret').value;
+    var refresh_token = document.getElementById('new-refresh-token').value;
 
     if (!client_id || !client_secret || !refresh_token) {
         document.getElementById('error').textContent = 'Client ID, secret, and refresh token are required';
@@ -210,7 +260,7 @@ async function addAccount() {
     try {
         const res = await fetch('/admin/accounts', {
             method: 'POST', headers: headers(),
-            body: JSON.stringify({ label, client_id, client_secret, refresh_token })
+            body: JSON.stringify({ label: label, client_id: client_id, client_secret: client_secret, refresh_token: refresh_token })
         });
         if (res.ok) {
             document.getElementById('success').textContent = 'Account added!';
