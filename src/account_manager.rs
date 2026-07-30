@@ -214,7 +214,7 @@ impl AccountManager {
         accounts.iter().find(|a| a.id == id).cloned()
     }
 
-    pub async fn select_account(&self) -> Result<Arc<AccountState>, AppError> {
+    pub async fn select_account_excluding(&self, exclude_ids: &[String]) -> Result<Arc<AccountState>, AppError> {
         let accounts = self.accounts.read().await;
         if accounts.is_empty() {
             return Err(AppError::Internal(
@@ -226,6 +226,9 @@ impl AccountManager {
         let mut scored: Vec<(f64, usize)> = Vec::new();
 
         for (i, account) in accounts.iter().enumerate() {
+            if exclude_ids.contains(&account.id) {
+                continue;
+            }
             if !account.is_active.load(Ordering::Relaxed) {
                 continue;
             }
@@ -255,7 +258,7 @@ impl AccountManager {
 
         if scored.is_empty() {
             return Err(AppError::ServiceUnavailable(
-                "All accounts are inactive or rate-limited".into(),
+                "All accounts are inactive, rate-limited, or have expired tokens".into(),
             ));
         }
 
@@ -264,6 +267,10 @@ impl AccountManager {
         best.last_used.store(now, Ordering::Relaxed);
         best.request_count.fetch_add(1, Ordering::Relaxed);
         Ok(best.clone())
+    }
+
+    pub async fn select_account(&self) -> Result<Arc<AccountState>, AppError> {
+        self.select_account_excluding(&[]).await
     }
 
     pub async fn mark_account_error(&self, id: &str, message: &str) {

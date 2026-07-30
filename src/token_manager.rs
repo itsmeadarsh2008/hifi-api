@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -16,6 +17,7 @@ pub struct TokenManager {
     #[allow(dead_code)]
     token_cache: Cache<String, (String, i64)>,
     refresh_lock: Mutex<String>,
+    account_manager: OnceLock<Arc<AccountManager>>,
 }
 
 impl TokenManager {
@@ -27,7 +29,12 @@ impl TokenManager {
                 .max_capacity(100)
                 .build(),
             refresh_lock: Mutex::new(String::new()),
+            account_manager: OnceLock::new(),
         }
+    }
+
+    pub fn set_account_manager(&self, am: Arc<AccountManager>) {
+        let _ = self.account_manager.set(am);
     }
 
     pub async fn get_token(
@@ -77,12 +84,21 @@ impl TokenManager {
             .send()
             .await?;
 
-        if res.status().as_u16() == 400 || res.status().as_u16() == 401 {
+        let status_code = res.status().as_u16();
+        if status_code == 400 || status_code == 401 || status_code == 403 {
             let error_data: Value = res.json().await.unwrap_or_default();
             let err_msg = error_data
                 .get("error_description")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown auth error");
+            tracing::warn!(
+                "Refresh token rejected for account {} ({}): {} — deactivating",
+                account.label, status_code, err_msg
+            );
+            account.is_active.store(false, std::sync::atomic::Ordering::Relaxed);
+            if let Some(am) = self.account_manager.get() {
+                let _ = am.set_account_active(&account.id, false).await;
+            }
             return Err(AppError::Unauthorized(format!("Tidal Auth Error: {}", err_msg)));
         }
 

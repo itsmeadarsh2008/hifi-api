@@ -35,6 +35,7 @@ pub struct AppState {
     pub tidal_client: Arc<tidal_client::TidalClient>,
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
+    pub setup_sessions: admin::setup::Sessions,
 }
 
 #[tokio::main]
@@ -129,6 +130,7 @@ async fn main() {
     }
 
     let token_manager = Arc::new(TokenManager::new(db));
+    token_manager.set_account_manager(account_manager.clone());
 
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
         (*http_client).clone(),
@@ -147,6 +149,7 @@ async fn main() {
         tidal_client: tidal_client.clone(),
         proxy_manager,
         anti_ban,
+        setup_sessions: admin::setup::new_session_store(),
     };
 
     // Start token pre-warming background task
@@ -197,8 +200,12 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts", get(crate::admin::accounts::list_accounts).post(crate::admin::accounts::add_account))
         .route("/accounts/{id}", patch(crate::admin::accounts::update_account).delete(crate::admin::accounts::remove_account))
         .route("/accounts/{id}/toggle", put(crate::admin::accounts::toggle_account))
+        .route("/accounts/test-all", post(crate::admin::accounts::test_all_accounts))
         .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
+        .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
+        .route("/setup", post(crate::admin::setup::start_setup))
+        .route("/setup/{session}", get(crate::admin::setup::check_setup))
         .layer(middleware::from_fn_with_state(state, crate::admin::admin_auth))
 }
 

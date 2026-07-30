@@ -1,3 +1,6 @@
+use std::sync::Mutex;
+use std::time::Instant;
+
 use axum::extract::{Path, State};
 use axum::Json;
 use serde::Deserialize;
@@ -5,6 +8,8 @@ use serde_json::{json, Value};
 
 use crate::error::AppError;
 use crate::AppState;
+
+static TEST_CACHE: Mutex<Option<(i64, Value)>> = Mutex::new(None);
 
 #[derive(Deserialize)]
 pub struct AddAccountRequest {
@@ -122,7 +127,7 @@ pub async fn toggle_account(
     Ok(Json(json!({ "message": format!("Account {} set to {}", id, status) })))
 }
 
-pub async fn test_account(
+pub async fn refresh_account_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
@@ -134,10 +139,126 @@ pub async fn test_account(
 
     match state
         .token_manager
+        .refresh_token(&account, state.tidal_client.http_client())
+        .await
+    {
+        Ok(_) => {
+            state.account_manager.set_account_active(&id, true).await?;
+            Ok(Json(json!({"status": "ok", "message": "Token refreshed, account reactivated"})))
+        }
+        Err(e) => Ok(Json(json!({"status": "error", "message": format!("{:?}", e)}))),
+    }
+}
+
+pub async fn test_all_accounts(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, AppError> {
+    let now = chrono::Utc::now().timestamp();
+    if let Ok(cache) = TEST_CACHE.lock() {
+        if let Some((ts, ref results)) = *cache {
+            if now - ts < 30 {
+                return Ok(Json(results.clone()));
+            }
+        }
+    }
+
+    let accounts = state.account_manager.list_accounts().await;
+    let country = &state.config.country_code;
+    let client = state.tidal_client.http_client().clone();
+    let token_manager = state.token_manager.clone();
+
+    let mut handles = Vec::new();
+    for account in &accounts {
+        let acc = account.clone();
+        let c = client.clone();
+        let tm = token_manager.clone();
+        let cc = country.clone();
+        handles.push(tokio::spawn(async move {
+            let label = acc.label.clone();
+            let id = acc.id.clone();
+            let token_expires_at = acc.token_expires_at.load(std::sync::atomic::Ordering::Relaxed);
+            let is_active = acc.is_active.load(std::sync::atomic::Ordering::Relaxed);
+            let start = Instant::now();
+            match tm.get_token(&acc, &c).await {
+                Ok(token) => {
+                    let url = format!(
+                        "https://api.tidal.com/v1/search/tracks?query=test&limit=1&countryCode={}",
+                        cc
+                    );
+                    match c.get(&url)
+                        .header("authorization", format!("Bearer {}", token))
+                        .header("User-Agent", "okhttp/5.3.2")
+                        .header("Accept", "*/*")
+                        .header("Accept-Encoding", "gzip")
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            let elapsed = start.elapsed().as_millis() as u64;
+                            let status_code = resp.status().as_u16();
+                            let body = resp.text().await.unwrap_or_default();
+                            let response_preview = if body.len() > 500 {
+                                format!("{}...", &body[..500])
+                            } else {
+                                body.clone()
+                            };
+                            if status_code == 200 {
+                                json!({"id": id, "label": label, "ok": true, "ms": elapsed, "status_code": status_code, "response_preview": response_preview, "response_body": body, "token_expires_at": token_expires_at, "is_active": is_active})
+                            } else {
+                                json!({"id": id, "label": label, "ok": false, "ms": elapsed, "status_code": status_code, "error": format!("HTTP {}", status_code), "response_preview": response_preview, "response_body": body, "token_expires_at": token_expires_at, "is_active": is_active})
+                            }
+                        }
+                        Err(e) => {
+                            let elapsed = start.elapsed().as_millis() as u64;
+                            json!({"id": id, "label": label, "ok": false, "ms": elapsed, "error": e.to_string(), "token_expires_at": token_expires_at, "is_active": is_active})
+                        }
+                    }
+                }
+                Err(e) => {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    json!({"id": id, "label": label, "ok": false, "ms": elapsed, "error": format!("Token: {:?}", e), "token_expires_at": token_expires_at, "is_active": is_active})
+                }
+            }
+        }));
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        if let Ok(r) = handle.await {
+            results.push(r);
+        }
+    }
+
+    let payload = json!({ "results": results });
+
+    if let Ok(mut cache) = TEST_CACHE.lock() {
+        *cache = Some((chrono::Utc::now().timestamp(), payload.clone()));
+    }
+
+    Ok(Json(payload))
+}
+
+pub async fn test_account(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let account = state
+        .account_manager
+        .get_account_by_id(&id)
+        .await
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", id)))?;
+
+    let token_expires_at = account.token_expires_at.load(std::sync::atomic::Ordering::Relaxed);
+    let is_active = account.is_active.load(std::sync::atomic::Ordering::Relaxed);
+    let start = Instant::now();
+
+    match state
+        .token_manager
         .get_token(&account, state.tidal_client.http_client())
         .await
     {
         Ok(token) => {
+            let token_ms = start.elapsed().as_millis() as u64;
             let resp = state
                 .tidal_client
                 .http_client()
@@ -147,15 +268,43 @@ pub async fn test_account(
                 .await;
             match resp {
                 Ok(r) => {
-                    if r.status().is_success() {
-                        Ok(Json(json!({"status": "ok", "message": "Account is working"})))
-                    } else {
-                        Ok(Json(json!({"status": "error", "message": format!("Tidal returned {}", r.status())})))
-                    }
+                    let status_code = r.status().as_u16();
+                    let body_text = r.text().await.unwrap_or_default();
+                    let total_ms = start.elapsed().as_millis() as u64;
+                    let response_json: Value = serde_json::from_str(&body_text)
+                        .unwrap_or(json!({"raw": body_text}));
+                    Ok(Json(json!({
+                        "status": if status_code == 200 { "ok" } else { "error" },
+                        "ms": total_ms,
+                        "token_ms": token_ms,
+                        "status_code": status_code,
+                        "token_expires_at": token_expires_at,
+                        "is_active": is_active,
+                        "response": response_json
+                    })))
                 }
-                Err(e) => Ok(Json(json!({"status": "error", "message": e.to_string()}))),
+                Err(e) => {
+                    let total_ms = start.elapsed().as_millis() as u64;
+                    Ok(Json(json!({
+                        "status": "error",
+                        "ms": total_ms,
+                        "token_ms": token_ms,
+                        "error": e.to_string(),
+                        "token_expires_at": token_expires_at,
+                        "is_active": is_active,
+                    })))
+                }
             }
         }
-        Err(e) => Ok(Json(json!({"status": "error", "message": format!("Token refresh failed: {:?}", e)}))),
+        Err(e) => {
+            let total_ms = start.elapsed().as_millis() as u64;
+            Ok(Json(json!({
+                "status": "error",
+                "ms": total_ms,
+                "error": format!("Token: {:?}", e),
+                "token_expires_at": token_expires_at,
+                "is_active": is_active,
+            })))
+        }
     }
 }
