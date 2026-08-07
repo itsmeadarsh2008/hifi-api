@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod error;
 mod proxy_manager;
+mod rate_limit;
 mod routes;
 mod setup;
 mod tidal_client;
@@ -35,6 +36,8 @@ pub struct AppState {
     pub tidal_client: Arc<tidal_client::TidalClient>,
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
+    pub rate_limits: Arc<rate_limit::RateLimitSettings>,
+    pub db: Option<sqlx::SqlitePool>,
     pub setup_sessions: admin::setup::Sessions,
 }
 
@@ -129,18 +132,26 @@ async fn main() {
         }
     }
 
-    let token_manager = Arc::new(TokenManager::new(db));
+    let token_manager = Arc::new(TokenManager::new(db.clone()));
     token_manager.set_account_manager(account_manager.clone());
+
+    let rate_limits = Arc::new(rate_limit::RateLimitSettings::from_env());
+    if let Some(db) = &db {
+        rate_limits.load_from_db(db).await;
+    }
+
+    let anti_ban = Arc::new(anti_ban::AntiBan::new(rate_limits.clone()));
 
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
         (*http_client).clone(),
         token_manager.clone(),
         account_manager.clone(),
+        anti_ban.clone(),
+        rate_limits.clone(),
         config.clone(),
     ));
 
     let proxy_manager = Arc::new(proxy_manager::ProxyManager::new(config.clone()));
-    let anti_ban = Arc::new(anti_ban::AntiBan::new());
 
     let state = AppState {
         config: config.clone(),
@@ -149,6 +160,8 @@ async fn main() {
         tidal_client: tidal_client.clone(),
         proxy_manager,
         anti_ban,
+        rate_limits,
+        db,
         setup_sessions: admin::setup::new_session_store(),
     };
 
@@ -165,7 +178,8 @@ async fn main() {
         .route("/", get(index))
         .route("/info/", get(routes::info::get_info))
         .route("/track/", get(routes::track::get_track))
-        .route("/trackManifests/", get(routes::track::get_track_manifests))
+        .route("/trackManifests/{id}", get(routes::track::get_track_manifests))
+        .route("/dash/{id}", get(routes::track::get_dash_stream))
         .route("/widevine", any(routes::widevine::widevine_proxy))
         .route("/recommendations/", get(routes::recommendations::get_recommendations))
         .route("/search/", get(routes::search::search))
@@ -204,6 +218,10 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
         .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
+        .route(
+            "/settings",
+            get(crate::admin::settings::get_settings).put(crate::admin::settings::update_settings),
+        )
         .route("/setup", post(crate::admin::setup::start_setup))
         .route("/setup/{session}", get(crate::admin::setup::check_setup))
         .layer(middleware::from_fn_with_state(state, crate::admin::admin_auth))

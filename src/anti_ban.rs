@@ -1,29 +1,51 @@
 use std::num::NonZeroU32;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use governor::clock::DefaultClock;
 use governor::state::{InMemoryState, NotKeyed};
 use governor::{Quota, RateLimiter};
 use rand::Rng;
 
+use crate::rate_limit::RateLimitSettings;
+
+type Limiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
+
 pub struct AntiBan {
-    global_limiter: RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
+    limiter: ArcSwap<Limiter>,
+    settings: Arc<RateLimitSettings>,
 }
 
 impl AntiBan {
-    pub fn new() -> Self {
+    pub fn new(settings: Arc<RateLimitSettings>) -> Self {
         Self {
-            global_limiter: RateLimiter::direct(
-                Quota::per_second(
-                    NonZeroU32::new(50).unwrap(),
-                )
-                .allow_burst(NonZeroU32::new(100).unwrap()),
-            ),
+            limiter: ArcSwap::from_pointee(Self::build_limiter(&settings)),
+            settings,
         }
     }
 
+    fn build_limiter(settings: &RateLimitSettings) -> Limiter {
+        let rps = settings.global_rps.load(Ordering::Relaxed) as u32;
+        let burst = settings.global_burst.load(Ordering::Relaxed) as u32;
+        RateLimiter::direct(
+            Quota::per_second(NonZeroU32::new(rps.max(1)).unwrap())
+                .allow_burst(NonZeroU32::new(burst.max(1)).unwrap()),
+        )
+    }
+
+    pub fn reload_limiter(&self) {
+        self.limiter
+            .store(Arc::new(Self::build_limiter(&self.settings)));
+    }
+
+    pub async fn until_ready(&self) {
+        self.limiter.load().until_ready().await;
+    }
+
     pub async fn check_global_rate_limit(&self) -> bool {
-        self.global_limiter.check().is_ok()
+        self.limiter.load().check().is_ok()
     }
 
     pub async fn apply_jitter(&self) {
@@ -51,6 +73,6 @@ impl AntiBan {
 
 impl Default for AntiBan {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(RateLimitSettings::from_env()))
     }
 }

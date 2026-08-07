@@ -64,7 +64,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .btn-danger:hover { background:#f85149; border-color:#f85149; color:#fff; }
 .btn-active { background:#1f6feb; border-color:rgba(31,111,235,0.5); color:#fff; }
 
-.form-section { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:28px; transition:border-color 0.2s; }
+.form-section { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:28px; margin-bottom:24px; transition:border-color 0.2s; }
 .form-section:hover { border-color:#484f58; }
 .form-section h3 { font-size:16px; margin-bottom:20px; color:#f0f6fc; }
 .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
@@ -174,6 +174,20 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 <button class="btn btn-primary" onclick="addAccount()">Add Account</button>
 <button class="btn" onclick="startOAuth()" id="oauthBtn" style="margin-left:8px">Add via OAuth</button>
+</div>
+
+<div class="form-section">
+<h3>Rate Limits</h3>
+<div class="form-row">
+<div class="form-group"><label>Global RPS</label><input type="number" id="rl-rps" min="1" placeholder="50"></div>
+<div class="form-group"><label>Global Burst</label><input type="number" id="rl-burst" min="1" placeholder="100"></div>
+</div>
+<div class="form-row">
+<div class="form-group"><label>429 Cooldown (sec)</label><input type="number" id="rl-429" min="0" placeholder="60"></div>
+<div class="form-group"><label>403 Cooldown (sec)</label><input type="number" id="rl-403" min="0" placeholder="120"></div>
+</div>
+<p style="font-size:11px;color:#8b949e;margin-bottom:16px">Global RPS/Burst throttle all Tidal requests. Cooldowns are how long an account is held out of rotation after a 429 (rate limited) or 403 (suspended/forbidden) response.</p>
+<button class="btn btn-primary" onclick="saveRateLimits()">Save Rate Limits</button>
 </div>
 
 <div class="test-results-section" id="testResultsSection" style="display:none">
@@ -696,6 +710,50 @@ function openOAuthUrl() {
 
 fetchData();
 setInterval(fetchData, 15000);
+loadRateLimits();
+
+async function loadRateLimits() {
+    try {
+        var res = await fetch('/admin/settings', { headers: headers() });
+        if (!res.ok) return;
+        var d = await res.json();
+        var r = d.rate_limits || {};
+        document.getElementById('rl-rps').value = r.global_rps || 50;
+        document.getElementById('rl-burst').value = r.global_burst || 100;
+        document.getElementById('rl-429').value = r.cooldown_429_secs || 60;
+        document.getElementById('rl-403').value = r.cooldown_403_secs || 120;
+    } catch(e) {}
+}
+
+async function saveRateLimits() {
+    var body = {
+        rate_limits: {
+            global_rps: parseInt(document.getElementById('rl-rps').value) || 50,
+            global_burst: parseInt(document.getElementById('rl-burst').value) || 100,
+            cooldown_429_secs: parseInt(document.getElementById('rl-429').value) || 60,
+            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 120
+        }
+    };
+    try {
+        var res = await fetch('/admin/settings', {
+            method: 'PUT', headers: headers(), body: JSON.stringify(body)
+        });
+        if (res.ok) {
+            document.getElementById('success').textContent = 'Rate limits saved!';
+            var d = await res.json();
+            var r = d.rate_limits || {};
+            document.getElementById('rl-rps').value = r.global_rps;
+            document.getElementById('rl-burst').value = r.global_burst;
+            document.getElementById('rl-429').value = r.cooldown_429_secs;
+            document.getElementById('rl-403').value = r.cooldown_403_secs;
+        } else {
+            var d = await res.json();
+            document.getElementById('error').textContent = d.detail || 'Error saving rate limits';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
 </script>
 </body>
 </html>"#;

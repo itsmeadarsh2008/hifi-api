@@ -1,10 +1,22 @@
-use axum::extract::{Query, Request, State};
+use axum::extract::{Path, Query, Request, State};
+use axum::response::Redirect;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::AppError;
 use crate::AppState;
+
+fn de_comma_list<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(d)?;
+    Ok(s.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
 
 #[derive(Deserialize)]
 pub struct TrackParams {
@@ -42,8 +54,7 @@ pub async fn get_track(
 #[derive(Deserialize)]
 #[allow(non_snake_case)]
 pub struct TrackManifestsParams {
-    pub id: String,
-    #[serde(default = "default_formats")]
+    #[serde(default = "default_formats", deserialize_with = "de_comma_list")]
     pub formats: Vec<String>,
     #[serde(default = "default_adaptive")]
     pub adaptive: String,
@@ -79,30 +90,26 @@ fn default_usage() -> String {
 
 pub async fn get_track_manifests(
     State(state): State<AppState>,
+    Path(track_id): Path<String>,
     Query(params): Query<TrackManifestsParams>,
     req: Request,
 ) -> Result<Json<Value>, AppError> {
-    let url = format!("https://openapi.tidal.com/v2/trackManifests/{}", params.id);
+    let url = format!("https://openapi.tidal.com/v2/trackManifests/{}", track_id);
 
-    let query_params = vec![
+    let mut all_params: Vec<(&str, &str)> = vec![
         ("adaptive", params.adaptive.as_str()),
         ("manifestType", params.manifestType.as_str()),
         ("uriScheme", params.uriScheme.as_str()),
         ("usage", params.usage.as_str()),
     ];
 
-    let mut all_params: Vec<(String, String)> = query_params
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-
     for fmt in &params.formats {
-        all_params.push(("formats".into(), fmt.clone()));
+        all_params.push(("formats", fmt.as_str()));
     }
 
     let result = state
         .tidal_client
-        .make_request(&url, None)
+        .make_request(&url, Some(all_params))
         .await?;
 
     let mut result = result;
@@ -141,4 +148,31 @@ pub async fn get_track_manifests(
     }
 
     Ok(Json(result))
+}
+
+pub async fn get_dash_stream(
+    State(state): State<AppState>,
+    Path(track_id): Path<String>,
+) -> Result<Redirect, AppError> {
+    let url = format!("https://openapi.tidal.com/v2/trackManifests/{}", track_id);
+
+    let all_params: Vec<(&str, &str)> = vec![
+        ("adaptive", "true"),
+        ("manifestType", "MPEG_DASH"),
+        ("uriScheme", "HTTPS"),
+        ("usage", "PLAYBACK"),
+        ("formats", "FLAC_HIRES,FLAC,EAC3_JOC,AACLC"),
+    ];
+
+    let result = state
+        .tidal_client
+        .make_request(&url, Some(all_params))
+        .await?;
+
+    let uri = result
+        .pointer("/data/data/attributes/uri")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Internal("No manifest URI in response".into()))?;
+
+    Ok(Redirect::temporary(uri))
 }

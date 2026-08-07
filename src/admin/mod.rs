@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod setup;
+pub mod settings;
 pub mod stats;
 pub mod ui;
 

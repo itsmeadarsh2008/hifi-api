@@ -78,6 +78,10 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `USE_PROXIES` | `false` | Enable proxy rotation |
 | `PROXIES_FILE` | `proxies.txt` | Proxy list (one per line) |
 | `MAX_RETRIES` | `2` | Retry count on proxy failure |
+| `RATE_LIMIT_RPS` | `50` | Global Tidal requests/sec (editable in admin panel) |
+| `RATE_LIMIT_BURST` | `100` | Global burst allowance (editable in admin panel) |
+| `COOLDOWN_429_SECS` | `60` | Account cooldown after a 429 (editable in admin panel) |
+| `COOLDOWN_403_SECS` | `120` | Account cooldown after a 403 (editable in admin panel) |
 | `RUST_LOG` | `info` | Log level |
 
 ## Deployment
@@ -339,12 +343,12 @@ Where `manifest` is base64 encoded MPD manifest (use `"manifestMimeType": "appli
 </MPD>
 ```
 
-### `GET /trackManifests/`
+### `GET /trackManifests/{id}`
 
 #### Params
 
-- `id`: `str` (required) - Tidal track ID.
-- `formats`: `list[str]` (optional, default `HEAACV1`, `AACLC`, `FLAC`, `FLAC_HIRES`, `EAC3_JOC`) - Requested audio formats. Can be specified multiple times.
+- `id`: `str` (required, path) - Tidal track ID.
+- `formats`: `str` (optional, default `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC`) - Requested audio formats, comma-separated.
 - `adaptive`: `str` (optional, default `true`) - Adaptive streaming (where multiple formats are returned in one response).
 - `manifestType`: `str` (optional, default `MPEG_DASH`, options `MPEG_DASH`, `HLS`) - Manifest type.
 - `uriScheme`: `str` (optional, default `HTTPS`, options `HTTPS`, `DATA`) - URI scheme. DATA returns everything in base64, HTTPS returns a link to the manifest.
