@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 pub struct RateLimitSettings {
-    pub global_rps: AtomicU64,
-    pub global_burst: AtomicU64,
+    pub ip_rps: AtomicU64,
+    pub ip_burst: AtomicU64,
     pub cooldown_429_secs: AtomicI64,
     pub cooldown_403_secs: AtomicI64,
 }
@@ -13,8 +13,8 @@ pub struct RateLimitSettings {
 impl RateLimitSettings {
     pub fn from_env() -> Self {
         Self {
-            global_rps: AtomicU64::new(env_u64("RATE_LIMIT_RPS", 50)),
-            global_burst: AtomicU64::new(env_u64("RATE_LIMIT_BURST", 100)),
+            ip_rps: AtomicU64::new(env_u64("RATE_LIMIT_RPS", 50)),
+            ip_burst: AtomicU64::new(env_u64("RATE_LIMIT_BURST", 100)),
             cooldown_429_secs: AtomicI64::new(env_i64("COOLDOWN_429_SECS", 60)),
             cooldown_403_secs: AtomicI64::new(env_i64("COOLDOWN_403_SECS", 120)),
         }
@@ -22,24 +22,24 @@ impl RateLimitSettings {
 
     pub fn snapshot(&self) -> Value {
         json!({
-            "global_rps": self.global_rps.load(Ordering::Relaxed),
-            "global_burst": self.global_burst.load(Ordering::Relaxed),
+            "ip_rps": self.ip_rps.load(Ordering::Relaxed),
+            "ip_burst": self.ip_burst.load(Ordering::Relaxed),
             "cooldown_429_secs": self.cooldown_429_secs.load(Ordering::Relaxed),
             "cooldown_403_secs": self.cooldown_403_secs.load(Ordering::Relaxed),
         })
     }
 
     pub fn apply(&self, updates: &Value) -> Result<(), String> {
-        if let Some(v) = opt_u64(updates, "global_rps")? {
-            self.global_rps.store(v.max(1), Ordering::Relaxed);
+        if let Some(v) = first_opt_u64(updates, &["ip_rps", "global_rps"])? {
+            self.ip_rps.store(v.max(1), Ordering::Relaxed);
         }
-        if let Some(v) = opt_u64(updates, "global_burst")? {
-            self.global_burst.store(v.max(1), Ordering::Relaxed);
+        if let Some(v) = first_opt_u64(updates, &["ip_burst", "global_burst"])? {
+            self.ip_burst.store(v.max(1), Ordering::Relaxed);
         }
-        if let Some(v) = opt_i64(updates, "cooldown_429_secs")? {
+        if let Some(v) = first_opt_i64(updates, &["cooldown_429_secs"])? {
             self.cooldown_429_secs.store(v.max(0), Ordering::Relaxed);
         }
-        if let Some(v) = opt_i64(updates, "cooldown_403_secs")? {
+        if let Some(v) = first_opt_i64(updates, &["cooldown_403_secs"])? {
             self.cooldown_403_secs.store(v.max(0), Ordering::Relaxed);
         }
         Ok(())
@@ -56,24 +56,26 @@ impl RateLimitSettings {
             }
         };
         for (key, value) in rows {
+            let v_u64 = value.parse::<u64>().ok();
+            let v_i64 = value.parse::<i64>().ok();
             match key.as_str() {
-                "global_rps" => {
-                    if let Ok(v) = value.parse::<u64>() {
-                        self.global_rps.store(v, Ordering::Relaxed);
+                "ip_rps" | "global_rps" => {
+                    if let Some(v) = v_u64 {
+                        self.ip_rps.store(v, Ordering::Relaxed);
                     }
                 }
-                "global_burst" => {
-                    if let Ok(v) = value.parse::<u64>() {
-                        self.global_burst.store(v, Ordering::Relaxed);
+                "ip_burst" | "global_burst" => {
+                    if let Some(v) = v_u64 {
+                        self.ip_burst.store(v, Ordering::Relaxed);
                     }
                 }
                 "cooldown_429_secs" => {
-                    if let Ok(v) = value.parse::<i64>() {
+                    if let Some(v) = v_i64 {
                         self.cooldown_429_secs.store(v, Ordering::Relaxed);
                     }
                 }
                 "cooldown_403_secs" => {
-                    if let Ok(v) = value.parse::<i64>() {
+                    if let Some(v) = v_i64 {
                         self.cooldown_403_secs.store(v, Ordering::Relaxed);
                     }
                 }
@@ -84,8 +86,8 @@ impl RateLimitSettings {
 
     pub async fn save_to_db(&self, db: &SqlitePool) {
         let entries = [
-            ("global_rps", self.global_rps.load(Ordering::Relaxed).to_string()),
-            ("global_burst", self.global_burst.load(Ordering::Relaxed).to_string()),
+            ("ip_rps", self.ip_rps.load(Ordering::Relaxed).to_string()),
+            ("ip_burst", self.ip_burst.load(Ordering::Relaxed).to_string()),
             ("cooldown_429_secs", self.cooldown_429_secs.load(Ordering::Relaxed).to_string()),
             ("cooldown_403_secs", self.cooldown_403_secs.load(Ordering::Relaxed).to_string()),
         ];
@@ -118,24 +120,34 @@ fn env_i64(key: &str, default: i64) -> i64 {
         .max(0)
 }
 
-fn opt_u64(obj: &Value, key: &str) -> Result<Option<u64>, String> {
-    match obj.get(key) {
-        None => Ok(None),
-        Some(v) if v.is_null() => Ok(None),
-        Some(v) => v
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| format!("{} must be a positive integer", key)),
+fn first_opt_u64(obj: &Value, keys: &[&str]) -> Result<Option<u64>, String> {
+    for key in keys {
+        match obj.get(key) {
+            None => continue,
+            Some(v) if v.is_null() => return Ok(None),
+            Some(v) => {
+                return v
+                    .as_u64()
+                    .map(Some)
+                    .ok_or_else(|| format!("{} must be a positive integer", key));
+            }
+        }
     }
+    Ok(None)
 }
 
-fn opt_i64(obj: &Value, key: &str) -> Result<Option<i64>, String> {
-    match obj.get(key) {
-        None => Ok(None),
-        Some(v) if v.is_null() => Ok(None),
-        Some(v) => v
-            .as_i64()
-            .map(Some)
-            .ok_or_else(|| format!("{} must be an integer", key)),
+fn first_opt_i64(obj: &Value, keys: &[&str]) -> Result<Option<i64>, String> {
+    for key in keys {
+        match obj.get(key) {
+            None => continue,
+            Some(v) if v.is_null() => return Ok(None),
+            Some(v) => {
+                return v
+                    .as_i64()
+                    .map(Some)
+                    .ok_or_else(|| format!("{} must be an integer", key));
+            }
+        }
     }
+    Ok(None)
 }

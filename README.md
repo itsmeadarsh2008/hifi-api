@@ -28,7 +28,7 @@ This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences
 | **Memory** | ~100-200 MB idle | ~5-15 MB idle |
 | **Startup time** | ~2-5 seconds (import overhead) | ~100ms (compiled binary) |
 | **Concurrent connections** | ~50-100 per instance (async Python, GIL-bound) | ~5,000-10,000 concurrent tasks per instance (tokio M:N threading, no GIL)¹ |
-| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate), per-account governor rate limiters, request jitter (±20%), staggered token refresh, automatic 429/401 rotation |
+| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate), per-IP keyed throttle (abusive clients get 429 without affecting others), request jitter (±20%), staggered token refresh, automatic 429/401 rotation |
 | **Request distribution** | Full requests, one account at a time | Traffic split into smaller chunks across accounts — each account serves fewer requests per minute, reducing Tidal's rate-limit triggers |
 | **Token cache** | In-memory dict | moka (TTL-aware, bounded) |
 | **Rate limiter** | Custom sleep-based | governor (GCRA algorithm) |
@@ -78,10 +78,11 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `USE_PROXIES` | `false` | Enable proxy rotation |
 | `PROXIES_FILE` | `proxies.txt` | Proxy list (one per line) |
 | `MAX_RETRIES` | `2` | Retry count on proxy failure |
-| `RATE_LIMIT_RPS` | `50` | Global Tidal requests/sec (editable in admin panel) |
-| `RATE_LIMIT_BURST` | `100` | Global burst allowance (editable in admin panel) |
+| `RATE_LIMIT_RPS` | `50` | Per-IP requests/sec (editable in admin panel) |
+| `RATE_LIMIT_BURST` | `100` | Per-IP burst allowance (editable in admin panel) |
 | `COOLDOWN_429_SECS` | `60` | Account cooldown after a 429 (editable in admin panel) |
 | `COOLDOWN_403_SECS` | `120` | Account cooldown after a 403 (editable in admin panel) |
+| `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
 | `RUST_LOG` | `info` | Log level |
 
 ## Deployment

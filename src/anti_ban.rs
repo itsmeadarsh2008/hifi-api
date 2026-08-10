@@ -1,17 +1,18 @@
+use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use governor::clock::DefaultClock;
-use governor::state::{InMemoryState, NotKeyed};
+use governor::clock::{Clock, DefaultClock};
+use governor::state::keyed::DefaultKeyedStateStore;
 use governor::{Quota, RateLimiter};
 use rand::Rng;
 
 use crate::rate_limit::RateLimitSettings;
 
-type Limiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
+type Limiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
 
 pub struct AntiBan {
     limiter: ArcSwap<Limiter>,
@@ -27,9 +28,9 @@ impl AntiBan {
     }
 
     fn build_limiter(settings: &RateLimitSettings) -> Limiter {
-        let rps = settings.global_rps.load(Ordering::Relaxed) as u32;
-        let burst = settings.global_burst.load(Ordering::Relaxed) as u32;
-        RateLimiter::direct(
+        let rps = settings.ip_rps.load(Ordering::Relaxed) as u32;
+        let burst = settings.ip_burst.load(Ordering::Relaxed) as u32;
+        RateLimiter::keyed(
             Quota::per_second(NonZeroU32::new(rps.max(1)).unwrap())
                 .allow_burst(NonZeroU32::new(burst.max(1)).unwrap()),
         )
@@ -40,12 +41,11 @@ impl AntiBan {
             .store(Arc::new(Self::build_limiter(&self.settings)));
     }
 
-    pub async fn until_ready(&self) {
-        self.limiter.load().until_ready().await;
-    }
-
-    pub async fn check_global_rate_limit(&self) -> bool {
-        self.limiter.load().check().is_ok()
+    pub fn check_ip(&self, ip: IpAddr) -> Result<(), Duration> {
+        match self.limiter.load().check_key(&ip) {
+            Ok(()) => Ok(()),
+            Err(not_until) => Err(not_until.wait_time_from(DefaultClock::default().now())),
+        }
     }
 
     pub async fn apply_jitter(&self) {

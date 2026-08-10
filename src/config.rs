@@ -8,6 +8,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub use_proxies: bool,
+    pub trust_proxy: bool,
     pub proxies_file: PathBuf,
     pub fallback_to_direct: bool,
     pub max_retries: u32,
@@ -26,6 +27,10 @@ impl Config {
             .unwrap_or(8000u16);
         let use_proxies = std::env::var("USE_PROXIES")
             .unwrap_or_default()
+            .to_lowercase()
+            == "true";
+        let trust_proxy = std::env::var("TRUST_PROXY_HEADERS")
+            .unwrap_or_else(|_| "true".into())
             .to_lowercase()
             == "true";
         let proxies_file = std::env::var("PROXIES_FILE")
@@ -48,6 +53,7 @@ impl Config {
             host,
             port,
             use_proxies,
+            trust_proxy,
             proxies_file,
             fallback_to_direct,
             max_retries,

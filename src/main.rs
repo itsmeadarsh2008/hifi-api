@@ -4,6 +4,7 @@ mod anti_ban;
 mod config;
 mod db;
 mod error;
+mod ip_limiter;
 mod proxy_manager;
 mod rate_limit;
 mod routes;
@@ -11,6 +12,7 @@ mod setup;
 mod tidal_client;
 mod token_manager;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -142,11 +144,23 @@ async fn main() {
 
     let anti_ban = Arc::new(anti_ban::AntiBan::new(rate_limits.clone()));
 
+    // Periodically rebuild the per-IP limiter so stale IP buckets are dropped
+    // (bounds memory) and no IP is throttled forever by past activity.
+    {
+        let ab = anti_ban.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                ab.reload_limiter();
+            }
+        });
+    }
+
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
         (*http_client).clone(),
         token_manager.clone(),
         account_manager.clone(),
-        anti_ban.clone(),
         rate_limits.clone(),
         config.clone(),
     ));
@@ -198,6 +212,10 @@ async fn main() {
         .route("/admin", get(crate::admin::ui::admin_index))
         // Admin API routes (auth-protected)
         .nest("/admin", admin_api(state.clone()))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            ip_limiter::enforce_ip_rate_limit,
+        ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -206,7 +224,12 @@ async fn main() {
     tracing::info!("HiFi API v{} starting on {}", config.api_version, addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 fn admin_api(state: AppState) -> Router<AppState> {
