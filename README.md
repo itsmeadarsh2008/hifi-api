@@ -78,10 +78,12 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `USE_PROXIES` | `false` | Enable proxy rotation |
 | `PROXIES_FILE` | `proxies.txt` | Proxy list (one per line) |
 | `MAX_RETRIES` | `2` | Retry count on proxy failure |
-| `RATE_LIMIT_RPS` | `50` | Per-IP requests/sec (editable in admin panel) |
-| `RATE_LIMIT_BURST` | `100` | Per-IP burst allowance (editable in admin panel) |
-| `COOLDOWN_429_SECS` | `60` | Account cooldown after a 429 (editable in admin panel) |
-| `COOLDOWN_403_SECS` | `120` | Account cooldown after a 403 (editable in admin panel) |
+| `RATE_LIMIT_RPS` | `20` | Per-IP requests/sec (editable in admin panel) |
+| `RATE_LIMIT_BURST` | `40` | Per-IP burst allowance (editable in admin panel) |
+| `TIDAL_RPS` | `12` | Global upstream Tidal requests/sec with jitter (editable in admin panel) |
+| `TIDAL_BURST` | `24` | Global upstream Tidal burst (editable in admin panel) |
+| `COOLDOWN_429_SECS` | `90` | Account cooldown after a 429 (editable in admin panel) |
+| `COOLDOWN_403_SECS` | `180` | Account cooldown after a 403 (editable in admin panel) |
 | `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
 | `RUST_LOG` | `info` | Log level |
 

@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use crate::account_manager::{AccountManager, AccountState};
+use crate::anti_ban::AntiBan;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::rate_limit::RateLimitSettings;
@@ -16,6 +17,7 @@ pub struct TidalClient {
     http_client: Client,
     token_manager: Arc<TokenManager>,
     account_manager: Arc<AccountManager>,
+    anti_ban: Arc<AntiBan>,
     rate_limits: Arc<RateLimitSettings>,
     config: Arc<Config>,
 }
@@ -26,6 +28,7 @@ impl TidalClient {
         http_client: Client,
         token_manager: Arc<TokenManager>,
         account_manager: Arc<AccountManager>,
+        anti_ban: Arc<AntiBan>,
         rate_limits: Arc<RateLimitSettings>,
         config: Arc<Config>,
     ) -> Self {
@@ -33,6 +36,7 @@ impl TidalClient {
             http_client,
             token_manager,
             account_manager,
+            anti_ban,
             rate_limits,
             config,
         }
@@ -90,6 +94,8 @@ impl TidalClient {
             };
 
             for attempt in 0..max_retries {
+                self.anti_ban.throttle_tidal().await;
+
                 let token = match self
                     .token_manager
                     .get_token(&account, &self.http_client)

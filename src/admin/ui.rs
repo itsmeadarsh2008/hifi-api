@@ -179,14 +179,18 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="form-section">
 <h3>Rate Limits</h3>
 <div class="form-row">
-<div class="form-group"><label>Per-IP RPS</label><input type="number" id="rl-rps" min="1" placeholder="50"></div>
-<div class="form-group"><label>Per-IP Burst</label><input type="number" id="rl-burst" min="1" placeholder="100"></div>
+<div class="form-group"><label>Per-IP RPS</label><input type="number" id="rl-rps" min="1" placeholder="20"></div>
+<div class="form-group"><label>Per-IP Burst</label><input type="number" id="rl-burst" min="1" placeholder="40"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>429 Cooldown (sec)</label><input type="number" id="rl-429" min="0" placeholder="60"></div>
-<div class="form-group"><label>403 Cooldown (sec)</label><input type="number" id="rl-403" min="0" placeholder="120"></div>
+<div class="form-group"><label>Tidal RPS (global)</label><input type="number" id="rl-tidal-rps" min="1" placeholder="12"></div>
+<div class="form-group"><label>Tidal Burst (global)</label><input type="number" id="rl-tidal-burst" min="1" placeholder="24"></div>
 </div>
-<p style="font-size:11px;color:#8b949e;margin-bottom:16px">Per-IP RPS/Burst limits apply independently to each client IP (excess requests get HTTP 429). Cooldowns are how long an account is held out of rotation after a 429 (rate limited) or 403 (suspended/forbidden) response.</p>
+<div class="form-row">
+<div class="form-group"><label>429 Cooldown (sec)</label><input type="number" id="rl-429" min="0" placeholder="90"></div>
+<div class="form-group"><label>403 Cooldown (sec)</label><input type="number" id="rl-403" min="0" placeholder="180"></div>
+</div>
+<p style="font-size:11px;color:#8b949e;margin-bottom:16px">Per-IP limits apply independently to each client IP (excess gets HTTP 429). Tidal limits throttle all upstream requests globally with jitter to avoid bans. Cooldowns park an account after a 429/403.</p>
 <button class="btn btn-primary" onclick="saveRateLimits()">Save Rate Limits</button>
 </div>
 
@@ -718,20 +722,24 @@ async function loadRateLimits() {
         if (!res.ok) return;
         var d = await res.json();
         var r = d.rate_limits || {};
-        document.getElementById('rl-rps').value = r.ip_rps != null ? r.ip_rps : (r.global_rps || 50);
-        document.getElementById('rl-burst').value = r.ip_burst != null ? r.ip_burst : (r.global_burst || 100);
-        document.getElementById('rl-429').value = r.cooldown_429_secs || 60;
-        document.getElementById('rl-403').value = r.cooldown_403_secs || 120;
+        document.getElementById('rl-rps').value = r.ip_rps != null ? r.ip_rps : (r.global_rps || 20);
+        document.getElementById('rl-burst').value = r.ip_burst != null ? r.ip_burst : (r.global_burst || 40);
+        document.getElementById('rl-tidal-rps').value = r.tidal_rps || 12;
+        document.getElementById('rl-tidal-burst').value = r.tidal_burst || 24;
+        document.getElementById('rl-429').value = r.cooldown_429_secs || 90;
+        document.getElementById('rl-403').value = r.cooldown_403_secs || 180;
     } catch(e) {}
 }
 
 async function saveRateLimits() {
     var body = {
         rate_limits: {
-            ip_rps: parseInt(document.getElementById('rl-rps').value) || 50,
-            ip_burst: parseInt(document.getElementById('rl-burst').value) || 100,
-            cooldown_429_secs: parseInt(document.getElementById('rl-429').value) || 60,
-            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 120
+            ip_rps: parseInt(document.getElementById('rl-rps').value) || 20,
+            ip_burst: parseInt(document.getElementById('rl-burst').value) || 40,
+            tidal_rps: parseInt(document.getElementById('rl-tidal-rps').value) || 12,
+            tidal_burst: parseInt(document.getElementById('rl-tidal-burst').value) || 24,
+            cooldown_429_secs: parseInt(document.getElementById('rl-429').value) || 90,
+            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 180
         }
     };
     try {
@@ -742,8 +750,10 @@ async function saveRateLimits() {
             document.getElementById('success').textContent = 'Rate limits saved!';
             var d = await res.json();
             var r = d.rate_limits || {};
-            document.getElementById('rl-rps').value = r.ip_rps != null ? r.ip_rps : (r.global_rps || 50);
-            document.getElementById('rl-burst').value = r.ip_burst != null ? r.ip_burst : (r.global_burst || 100);
+            document.getElementById('rl-rps').value = r.ip_rps != null ? r.ip_rps : (r.global_rps || 20);
+            document.getElementById('rl-burst').value = r.ip_burst != null ? r.ip_burst : (r.global_burst || 40);
+            document.getElementById('rl-tidal-rps').value = r.tidal_rps || 12;
+            document.getElementById('rl-tidal-burst').value = r.tidal_burst || 24;
             document.getElementById('rl-429').value = r.cooldown_429_secs;
             document.getElementById('rl-403').value = r.cooldown_403_secs;
         } else {

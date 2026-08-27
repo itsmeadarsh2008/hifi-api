@@ -7,27 +7,31 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use governor::clock::{Clock, DefaultClock};
 use governor::state::keyed::DefaultKeyedStateStore;
+use governor::state::{InMemoryState, NotKeyed};
 use governor::{Quota, RateLimiter};
 use rand::Rng;
 
 use crate::rate_limit::RateLimitSettings;
 
-type Limiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
+type IpLimiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
+type TidalLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 
 pub struct AntiBan {
-    limiter: ArcSwap<Limiter>,
+    ip_limiter: ArcSwap<IpLimiter>,
+    tidal_limiter: ArcSwap<TidalLimiter>,
     settings: Arc<RateLimitSettings>,
 }
 
 impl AntiBan {
     pub fn new(settings: Arc<RateLimitSettings>) -> Self {
         Self {
-            limiter: ArcSwap::from_pointee(Self::build_limiter(&settings)),
+            ip_limiter: ArcSwap::from_pointee(Self::build_ip_limiter(&settings)),
+            tidal_limiter: ArcSwap::from_pointee(Self::build_tidal_limiter(&settings)),
             settings,
         }
     }
 
-    fn build_limiter(settings: &RateLimitSettings) -> Limiter {
+    fn build_ip_limiter(settings: &RateLimitSettings) -> IpLimiter {
         let rps = settings.ip_rps.load(Ordering::Relaxed) as u32;
         let burst = settings.ip_burst.load(Ordering::Relaxed) as u32;
         RateLimiter::keyed(
@@ -36,16 +40,32 @@ impl AntiBan {
         )
     }
 
+    fn build_tidal_limiter(settings: &RateLimitSettings) -> TidalLimiter {
+        let rps = settings.tidal_rps.load(Ordering::Relaxed) as u32;
+        let burst = settings.tidal_burst.load(Ordering::Relaxed) as u32;
+        RateLimiter::direct(
+            Quota::per_second(NonZeroU32::new(rps.max(1)).unwrap())
+                .allow_burst(NonZeroU32::new(burst.max(1)).unwrap()),
+        )
+    }
+
     pub fn reload_limiter(&self) {
-        self.limiter
-            .store(Arc::new(Self::build_limiter(&self.settings)));
+        self.ip_limiter
+            .store(Arc::new(Self::build_ip_limiter(&self.settings)));
+        self.tidal_limiter
+            .store(Arc::new(Self::build_tidal_limiter(&self.settings)));
     }
 
     pub fn check_ip(&self, ip: IpAddr) -> Result<(), Duration> {
-        match self.limiter.load().check_key(&ip) {
+        match self.ip_limiter.load().check_key(&ip) {
             Ok(()) => Ok(()),
             Err(not_until) => Err(not_until.wait_time_from(DefaultClock::default().now())),
         }
+    }
+
+    pub async fn throttle_tidal(&self) {
+        self.tidal_limiter.load().until_ready().await;
+        self.apply_jitter().await;
     }
 
     pub async fn apply_jitter(&self) {

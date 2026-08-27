@@ -6,6 +6,8 @@ use sqlx::SqlitePool;
 pub struct RateLimitSettings {
     pub ip_rps: AtomicU64,
     pub ip_burst: AtomicU64,
+    pub tidal_rps: AtomicU64,
+    pub tidal_burst: AtomicU64,
     pub cooldown_429_secs: AtomicI64,
     pub cooldown_403_secs: AtomicI64,
 }
@@ -13,10 +15,12 @@ pub struct RateLimitSettings {
 impl RateLimitSettings {
     pub fn from_env() -> Self {
         Self {
-            ip_rps: AtomicU64::new(env_u64("RATE_LIMIT_RPS", 50)),
-            ip_burst: AtomicU64::new(env_u64("RATE_LIMIT_BURST", 100)),
-            cooldown_429_secs: AtomicI64::new(env_i64("COOLDOWN_429_SECS", 60)),
-            cooldown_403_secs: AtomicI64::new(env_i64("COOLDOWN_403_SECS", 120)),
+            ip_rps: AtomicU64::new(env_u64("RATE_LIMIT_RPS", 20)),
+            ip_burst: AtomicU64::new(env_u64("RATE_LIMIT_BURST", 40)),
+            tidal_rps: AtomicU64::new(env_u64("TIDAL_RPS", 12)),
+            tidal_burst: AtomicU64::new(env_u64("TIDAL_BURST", 24)),
+            cooldown_429_secs: AtomicI64::new(env_i64("COOLDOWN_429_SECS", 90)),
+            cooldown_403_secs: AtomicI64::new(env_i64("COOLDOWN_403_SECS", 180)),
         }
     }
 
@@ -24,6 +28,8 @@ impl RateLimitSettings {
         json!({
             "ip_rps": self.ip_rps.load(Ordering::Relaxed),
             "ip_burst": self.ip_burst.load(Ordering::Relaxed),
+            "tidal_rps": self.tidal_rps.load(Ordering::Relaxed),
+            "tidal_burst": self.tidal_burst.load(Ordering::Relaxed),
             "cooldown_429_secs": self.cooldown_429_secs.load(Ordering::Relaxed),
             "cooldown_403_secs": self.cooldown_403_secs.load(Ordering::Relaxed),
         })
@@ -35,6 +41,12 @@ impl RateLimitSettings {
         }
         if let Some(v) = first_opt_u64(updates, &["ip_burst", "global_burst"])? {
             self.ip_burst.store(v.max(1), Ordering::Relaxed);
+        }
+        if let Some(v) = first_opt_u64(updates, &["tidal_rps"])? {
+            self.tidal_rps.store(v.max(1), Ordering::Relaxed);
+        }
+        if let Some(v) = first_opt_u64(updates, &["tidal_burst"])? {
+            self.tidal_burst.store(v.max(1), Ordering::Relaxed);
         }
         if let Some(v) = first_opt_i64(updates, &["cooldown_429_secs"])? {
             self.cooldown_429_secs.store(v.max(0), Ordering::Relaxed);
@@ -79,6 +91,16 @@ impl RateLimitSettings {
                         self.cooldown_403_secs.store(v, Ordering::Relaxed);
                     }
                 }
+                "tidal_rps" => {
+                    if let Some(v) = v_u64 {
+                        self.tidal_rps.store(v, Ordering::Relaxed);
+                    }
+                }
+                "tidal_burst" => {
+                    if let Some(v) = v_u64 {
+                        self.tidal_burst.store(v, Ordering::Relaxed);
+                    }
+                }
                 _ => {}
             }
         }
@@ -88,6 +110,8 @@ impl RateLimitSettings {
         let entries = [
             ("ip_rps", self.ip_rps.load(Ordering::Relaxed).to_string()),
             ("ip_burst", self.ip_burst.load(Ordering::Relaxed).to_string()),
+            ("tidal_rps", self.tidal_rps.load(Ordering::Relaxed).to_string()),
+            ("tidal_burst", self.tidal_burst.load(Ordering::Relaxed).to_string()),
             ("cooldown_429_secs", self.cooldown_429_secs.load(Ordering::Relaxed).to_string()),
             ("cooldown_403_secs", self.cooldown_403_secs.load(Ordering::Relaxed).to_string()),
         ];

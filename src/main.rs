@@ -161,6 +161,7 @@ async fn main() {
         (*http_client).clone(),
         token_manager.clone(),
         account_manager.clone(),
+        anti_ban.clone(),
         rate_limits.clone(),
         config.clone(),
     ));
