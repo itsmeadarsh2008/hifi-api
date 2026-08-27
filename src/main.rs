@@ -235,6 +235,8 @@ async fn main() {
 
 fn admin_api(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/accounts/export", get(crate::admin::accounts::export_accounts))
+        .route("/accounts/import", post(crate::admin::accounts::import_accounts))
         .route("/accounts", get(crate::admin::accounts::list_accounts).post(crate::admin::accounts::add_account))
         .route("/accounts/{id}", patch(crate::admin::accounts::update_account).delete(crate::admin::accounts::remove_account))
         .route("/accounts/{id}/toggle", put(crate::admin::accounts::toggle_account))

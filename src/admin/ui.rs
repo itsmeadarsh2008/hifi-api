@@ -177,6 +177,17 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 
 <div class="form-section">
+<h3>Import / Export</h3>
+<p style="font-size:12px;color:#8b949e;margin-bottom:12px">Backup or restore all Tidal credentials as JSON. Import skips duplicates by refresh_token.</p>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<button class="btn" onclick="exportCredentials()">Export credentials.json</button>
+<button class="btn" onclick="document.getElementById('importFile').click()">Import credentials.json</button>
+<input type="file" id="importFile" accept=".json,application/json" style="display:none" onchange="importCredentials(event)">
+</div>
+<div id="importResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
+</div>
+
+<div class="form-section">
 <h3>Rate Limits</h3>
 <div class="form-row">
 <div class="form-group"><label>Per-IP RPS</label><input type="number" id="rl-rps" min="1" placeholder="20"></div>
@@ -729,6 +740,37 @@ async function loadRateLimits() {
         document.getElementById('rl-429').value = r.cooldown_429_secs || 90;
         document.getElementById('rl-403').value = r.cooldown_403_secs || 180;
     } catch(e) {}
+}
+
+async function exportCredentials() {
+    try {
+        var res = await fetch('/admin/accounts/export', { headers: headers() });
+        if (!res.ok) { document.getElementById('error').textContent = 'Export failed: ' + res.status; return; }
+        var data = await res.json();
+        var list = data.accounts || data;
+        var blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a'); a.href = url; a.download = 'credentials.json'; a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById('success').textContent = 'Exported ' + list.length + ' accounts';
+    } catch(e) { document.getElementById('error').textContent = e.message; }
+}
+
+async function importCredentials(e) {
+    var file = e.target.files[0]; if (!file) return;
+    try {
+        var text = await file.text();
+        var json = JSON.parse(text);
+        var payload = json.accounts ? json : (Array.isArray(json) ? { accounts: json } : json);
+        var res = await fetch('/admin/accounts/import', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = 'Imported ' + data.imported + ' accounts (skipped ' + data.skipped + ')';
+            document.getElementById('importResult').textContent = data.errors && data.errors.length ? 'Errors: ' + JSON.stringify(data.errors).slice(0, 400) : '';
+            fetchData();
+        } else { document.getElementById('error').textContent = data.detail || 'Import failed'; }
+    } catch(err) { document.getElementById('error').textContent = 'Import error: ' + err.message; }
+    e.target.value = '';
 }
 
 async function saveRateLimits() {

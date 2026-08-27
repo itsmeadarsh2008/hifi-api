@@ -238,6 +238,105 @@ pub async fn test_all_accounts(
     Ok(Json(payload))
 }
 
+pub async fn export_accounts(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, AppError> {
+    let accounts = state.account_manager.list_accounts().await;
+    let exported: Vec<Value> = accounts
+        .iter()
+        .map(|a| {
+            json!({
+                "label": a.label,
+                "client_id": a.client_id,
+                "client_secret": a.client_secret,
+                "refresh_token": a.refresh_token,
+                "user_id": futures::executor::block_on(async { a.user_id.read().await.clone() }),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "accounts": exported })))
+}
+
+pub async fn import_accounts(
+    State(state): State<AppState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let arr = if let Some(a) = body.get("accounts").and_then(|v| v.as_array()) {
+        a.clone()
+    } else if let Some(a) = body.as_array() {
+        a.clone()
+    } else if let Some(a) = body.get("credentials").and_then(|v| v.as_array()) {
+        a.clone()
+    } else {
+        return Err(AppError::BadRequest(
+            "Expected {accounts: [...]} or [...] with client_id/client_secret/refresh_token".into(),
+        ));
+    };
+
+    let existing = state.account_manager.list_accounts().await;
+    let existing_tokens: std::collections::HashSet<String> =
+        existing.iter().map(|a| a.refresh_token.clone()).collect();
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    let mut errors: Vec<Value> = Vec::new();
+
+    for (i, val) in arr.iter().enumerate() {
+        let client_id = val
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let client_secret = val
+            .get("client_secret")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let refresh_token = val
+            .get("refresh_token")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if client_id.is_empty() || client_secret.is_empty() || refresh_token.is_empty() {
+            errors.push(json!({"index": i, "error": "missing client_id/client_secret/refresh_token"}));
+            skipped += 1;
+            continue;
+        }
+        if existing_tokens.contains(&refresh_token) {
+            skipped += 1;
+            continue;
+        }
+        let label = val
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let user_id = val
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        match state
+            .account_manager
+            .add_account(label, client_id, client_secret, refresh_token, user_id)
+            .await
+        {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                errors.push(json!({"index": i, "error": format!("{:?}", e)}));
+                skipped += 1;
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors
+    })))
+}
+
 pub async fn test_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
