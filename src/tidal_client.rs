@@ -226,6 +226,24 @@ impl TidalClient {
                             e, body.chars().take(200).collect::<String>()),
                     ))?;
 
+                // Preview-only (FULL requires subscription) → try next account instead of returning 30s snippet
+                let is_preview = data
+                    .get("assetPresentation")
+                    .and_then(|v| v.as_str())
+                    == Some("PREVIEW")
+                    || data
+                        .pointer("/data/attributes/trackPresentation")
+                        .and_then(|v| v.as_str())
+                        == Some("PREVIEW");
+                if is_preview {
+                    failed_ids.push(account.id.clone());
+                    last_account_error = Some(AppError::ServiceUnavailable(format!(
+                        "Preview only for track: account {} cannot provide FULL (subscription required)",
+                        account.id
+                    )));
+                    break;
+                }
+
                 if url.contains("playbackinfo") || url.contains("trackManifests") {
                     return Ok(json!({"version": self.config.api_version, "data": data}));
                 }
