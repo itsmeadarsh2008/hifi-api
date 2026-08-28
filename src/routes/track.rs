@@ -48,6 +48,20 @@ pub async fn get_track(
             ]),
         )
         .await?;
+    if result
+        .pointer("/data/assetPresentation")
+        .and_then(|v| v.as_str())
+        == Some("PREVIEW")
+    {
+        let reason = result
+            .pointer("/data/previewReason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("FULL_REQUIRES_SUBSCRIPTION");
+        return Err(AppError::ServiceUnavailable(format!(
+            "Preview only ({}): track {} requires subscription or is not available as FULL in this region",
+            reason, params.id
+        )));
+    }
     Ok(Json(result))
 }
 
@@ -112,6 +126,21 @@ pub async fn get_track_manifests(
         .make_request(&url, Some(all_params))
         .await?;
 
+    if result
+        .pointer("/data/data/attributes/trackPresentation")
+        .and_then(|v| v.as_str())
+        == Some("PREVIEW")
+    {
+        let reason = result
+            .pointer("/data/data/attributes/previewReason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("PREVIEW");
+        return Err(AppError::ServiceUnavailable(format!(
+            "Preview only ({}): track {} not available as FULL",
+            reason, track_id
+        )));
+    }
+
     let mut result = result;
     if let Some(data) = result.get_mut("data") {
         if let Some(data_obj) = data.as_object_mut() {
@@ -168,6 +197,21 @@ pub async fn get_dash_stream(
         .tidal_client
         .make_request(&url, Some(all_params))
         .await?;
+
+    if result
+        .pointer("/data/data/attributes/trackPresentation")
+        .and_then(|v| v.as_str())
+        == Some("PREVIEW")
+    {
+        let reason = result
+            .pointer("/data/data/attributes/previewReason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("PREVIEW");
+        return Err(AppError::ServiceUnavailable(format!(
+            "Preview only ({}): track {} not available as FULL",
+            reason, track_id
+        )));
+    }
 
     let uri = result
         .pointer("/data/data/attributes/uri")
