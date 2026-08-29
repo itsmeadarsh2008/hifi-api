@@ -194,6 +194,8 @@ async fn main() {
         .route("/info/", get(routes::info::get_info))
         .route("/track/", get(routes::track::get_track))
         .route("/trackManifests/{id}", get(routes::track::get_track_manifests))
+        .route("/trackManifests", get(routes::track::get_track_manifests_query))
+        .route("/trackManifests/", get(routes::track::get_track_manifests_query))
         .route("/dash/{id}", get(routes::track::get_dash_stream))
         .route("/widevine", any(routes::widevine::widevine_proxy))
         .route("/recommendations/", get(routes::recommendations::get_recommendations))

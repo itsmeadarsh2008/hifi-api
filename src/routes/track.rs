@@ -1,4 +1,5 @@
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{Path, Query, RawQuery, State};
+use axum::http::HeaderMap;
 use axum::response::Redirect;
 use axum::Json;
 use serde::Deserialize;
@@ -6,17 +7,6 @@ use serde_json::{json, Value};
 
 use crate::error::AppError;
 use crate::AppState;
-
-fn de_comma_list<'de, D>(d: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(d)?;
-    Ok(s.split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect())
-}
 
 #[derive(Deserialize)]
 pub struct TrackParams {
@@ -68,8 +58,20 @@ pub async fn get_track(
 #[derive(Deserialize)]
 #[allow(non_snake_case)]
 pub struct TrackManifestsParams {
-    #[serde(default = "default_formats", deserialize_with = "de_comma_list")]
-    pub formats: Vec<String>,
+    #[serde(default = "default_adaptive")]
+    pub adaptive: String,
+    #[serde(default = "default_manifest_type")]
+    pub manifestType: String,
+    #[serde(default = "default_uri_scheme")]
+    pub uriScheme: String,
+    #[serde(default = "default_usage")]
+    pub usage: String,
+}
+
+#[derive(Deserialize)]
+#[allow(non_snake_case)]
+pub struct TrackManifestsQueryParams {
+    pub id: String,
     #[serde(default = "default_adaptive")]
     pub adaptive: String,
     #[serde(default = "default_manifest_type")]
@@ -102,12 +104,36 @@ fn default_usage() -> String {
     "PLAYBACK".into()
 }
 
-pub async fn get_track_manifests(
-    State(state): State<AppState>,
-    Path(track_id): Path<String>,
-    Query(params): Query<TrackManifestsParams>,
-    req: Request,
-) -> Result<Json<Value>, AppError> {
+fn parse_formats(raw: Option<&str>) -> Vec<String> {
+    let Some(q) = raw else {
+        return default_formats();
+    };
+    let mut out = Vec::new();
+    for (k, v) in form_urlencoded::parse(q.as_bytes()) {
+        if k == "formats" {
+            for part in v.split(',') {
+                let p = part.trim();
+                if !p.is_empty() {
+                    out.push(p.to_string());
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        default_formats()
+    } else {
+        out
+    }
+}
+
+async fn fetch_manifest_inner(
+    state: &AppState,
+    track_id: &str,
+    params: &TrackManifestsParams,
+    host: &str,
+    raw_query: Option<&str>,
+) -> Result<Value, AppError> {
+    let formats = parse_formats(raw_query);
     let url = format!("https://openapi.tidal.com/v2/trackManifests/{}", track_id);
 
     let mut all_params: Vec<(&str, &str)> = vec![
@@ -117,7 +143,7 @@ pub async fn get_track_manifests(
         ("usage", params.usage.as_str()),
     ];
 
-    for fmt in &params.formats {
+    for fmt in &formats {
         all_params.push(("formats", fmt.as_str()));
     }
 
@@ -148,15 +174,7 @@ pub async fn get_track_manifests(
                 if let Some(attributes) = data_inner.get("attributes") {
                     if let Some(drm_data) = attributes.get("drmData") {
                         if let Some(_drm_obj) = drm_data.as_object() {
-                            let proxy_url = format!(
-                                "{}/widevine",
-                                req.uri().authority().map(|a| {
-                                    format!("{}://{}", 
-                                        if req.uri().scheme_str() == Some("https") { "https" } else { "http" },
-                                        a
-                                    )
-                                }).unwrap_or_default().trim_end_matches('/')
-                            );
+                            let proxy_url = format!("https://{}/widevine", host);
                             if let Some(drm) = data_inner.as_object_mut() {
                                 if let Some(attrs) = drm.get_mut("attributes") {
                                     if let Some(attrs_obj) = attrs.as_object_mut() {
@@ -176,6 +194,43 @@ pub async fn get_track_manifests(
         }
     }
 
+    Ok(result)
+}
+
+// Path-based: GET /trackManifests/{id}?formats=...  (our Rust style, keep for compat)
+pub async fn get_track_manifests(
+    State(state): State<AppState>,
+    Path(track_id): Path<String>,
+    Query(params): Query<TrackManifestsParams>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+) -> Result<Json<Value>, AppError> {
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let result = fetch_manifest_inner(&state, &track_id, &params, host, query.as_deref()).await?;
+    Ok(Json(result))
+}
+
+// Query-based: GET /trackManifests/?id=...&formats=...  (binimum hifi-api style)
+pub async fn get_track_manifests_query(
+    State(state): State<AppState>,
+    Query(params): Query<TrackManifestsQueryParams>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+) -> Result<Json<Value>, AppError> {
+    let inner = TrackManifestsParams {
+        adaptive: params.adaptive.clone(),
+        manifestType: params.manifestType.clone(),
+        uriScheme: params.uriScheme.clone(),
+        usage: params.usage.clone(),
+    };
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let result = fetch_manifest_inner(&state, &params.id, &inner, host, query.as_deref()).await?;
     Ok(Json(result))
 }
 
