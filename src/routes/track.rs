@@ -66,6 +66,8 @@ pub struct TrackManifestsParams {
     pub uriScheme: String,
     #[serde(default = "default_usage")]
     pub usage: String,
+    #[serde(default)]
+    pub countryCode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +82,8 @@ pub struct TrackManifestsQueryParams {
     pub uriScheme: String,
     #[serde(default = "default_usage")]
     pub usage: String,
+    #[serde(default)]
+    pub countryCode: Option<String>,
 }
 
 fn default_formats() -> Vec<String> {
@@ -136,11 +140,16 @@ async fn fetch_manifest_inner(
     let formats = parse_formats(raw_query);
     let url = format!("https://openapi.tidal.com/v2/trackManifests/{}", track_id);
 
+    let country_code = params
+        .countryCode
+        .as_deref()
+        .unwrap_or(&state.config.country_code);
     let mut all_params: Vec<(&str, &str)> = vec![
         ("adaptive", params.adaptive.as_str()),
         ("manifestType", params.manifestType.as_str()),
         ("uriScheme", params.uriScheme.as_str()),
         ("usage", params.usage.as_str()),
+        ("countryCode", country_code),
     ];
 
     for fmt in &formats {
@@ -225,6 +234,7 @@ pub async fn get_track_manifests_query(
         manifestType: params.manifestType.clone(),
         uriScheme: params.uriScheme.clone(),
         usage: params.usage.clone(),
+        countryCode: params.countryCode.clone(),
     };
     let host = headers
         .get("host")
@@ -245,6 +255,7 @@ pub async fn get_dash_stream(
         ("manifestType", "MPEG_DASH"),
         ("uriScheme", "HTTPS"),
         ("usage", "PLAYBACK"),
+        ("countryCode", &state.config.country_code),
         ("formats", "FLAC_HIRES,FLAC,EAC3_JOC,AACLC"),
     ];
 
