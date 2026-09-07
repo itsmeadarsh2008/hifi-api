@@ -4,6 +4,7 @@ mod anti_ban;
 mod config;
 mod db;
 mod error;
+mod cache;
 mod ip_limiter;
 mod notifier;
 mod proxy_manager;
@@ -40,6 +41,7 @@ pub struct AppState {
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
     pub notifier: Arc<notifier::Notifier>,
+    pub cache: Arc<cache::ResponseCache>,
     pub rate_limits: Arc<rate_limit::RateLimitSettings>,
     pub request_log: Arc<request_log::RequestLog>,
     pub db: Option<sqlx::SqlitePool>,
@@ -176,6 +178,7 @@ async fn main() {
         proxy_manager: proxy_manager.clone(),
         anti_ban,
         notifier,
+        cache: Arc::new(cache::ResponseCache::new()),
         rate_limits,
         request_log: Arc::new(request_log::RequestLog::new()),
         db,
@@ -219,6 +222,11 @@ async fn main() {
         .route("/admin", get(crate::admin::ui::admin_index))
         // Admin API routes (auth-protected)
         .nest("/admin", admin_api(state.clone()))
+        // Innermost: response cache (inside the IP limiter, so limits apply uniformly).
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            cache::cache_responses,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             ip_limiter::enforce_ip_rate_limit,
@@ -258,6 +266,8 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/proxies", get(crate::admin::proxies::proxy_status))
         .route("/alerts", get(crate::admin::alerts::alert_status))
         .route("/alerts/test", post(crate::admin::alerts::alert_test))
+        .route("/cache", get(crate::admin::cache::cache_stats))
+        .route("/cache/clear", post(crate::admin::cache::cache_clear))
         .route("/requests", get(crate::admin::requests::get_requests))
         .route(
             "/settings",

@@ -241,6 +241,11 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 <div class="card-stats" style="margin-bottom:12px" id="rq-endpoints"></div>
 <div id="rq-recent" style="font-family:monospace;font-size:11px;line-height:1.7;max-height:220px;overflow-y:auto"></div>
+<div class="card-stats" style="margin-top:12px">
+<span class="card-stat">Cache hits <strong id="cc-hits">—</strong></span>
+<span class="card-stat">Misses <strong id="cc-misses">—</strong></span>
+</div>
+<button class="btn" onclick="clearCache()" id="clearCacheBtn" style="margin-top:8px">Clear Cache</button>
 </div>
 
 <div class="test-results-section" id="testResultsSection" style="display:none">
@@ -844,6 +849,39 @@ async function testAlert() {
 }
 loadRequestLog();
 setInterval(loadRequestLog, 15000);
+loadCacheStats();
+setInterval(loadCacheStats, 15000);
+
+async function clearCache() {
+    var btn = document.getElementById('clearCacheBtn');
+    btn.textContent = 'Clearing...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/cache/clear', { method: 'POST', headers: headers() });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Cache cleared!';
+            loadRequestLog();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = 'Clear Cache';
+        btn.disabled = false;
+    }
+}
+
+async function loadCacheStats() {
+    try {
+        var res = await fetch('/admin/cache', { headers: headers() });
+        if (!res.ok) return;
+        var c = (await res.json()).cache || {};
+        document.getElementById('cc-hits').textContent = c.hits != null ? c.hits : '—';
+        document.getElementById('cc-misses').textContent = c.misses != null ? c.misses : '—';
+    } catch(e) {}
+}
 
 async function loadRequestLog() {
     try {
