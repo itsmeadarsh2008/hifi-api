@@ -149,6 +149,35 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 
 @keyframes highlightPulse { 0%,100% { border-color:#30363d; } 50% { border-color:#58a6ff; box-shadow:0 0 20px rgba(88,166,255,0.15); } }
 .form-highlight { animation:highlightPulse 1.5s ease; }
+
+.terminal { background:#050805; border:1px solid #1d3a24; border-radius:10px; overflow:hidden; margin-bottom:24px; box-shadow:0 0 24px rgba(63,185,80,0.07); }
+.term-bar { display:flex; align-items:center; gap:10px; padding:9px 14px; background:#0b120c; border-bottom:1px solid #1d3a24; }
+.term-dots { display:flex; gap:6px; }
+.term-dots i { width:10px; height:10px; border-radius:50%; background:#2a3b2d; }
+.term-dots i:nth-child(1) { background:#f85149; }
+.term-dots i:nth-child(2) { background:#d29922; }
+.term-dots i:nth-child(3) { background:#3fb950; }
+.term-title { font-size:11px; color:#7d8a7e; font-family:monospace; flex:1; }
+.term-live { font-size:10px; color:#3fb950; font-family:monospace; letter-spacing:1px; animation:termBlink 2s infinite; }
+@keyframes termBlink { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+.term-meta { display:flex; gap:16px; flex-wrap:wrap; padding:9px 14px; border-bottom:1px solid #142114; font-family:monospace; font-size:11px; color:#5f6f60; }
+.term-meta strong { color:#9fe8b4; font-weight:600; }
+.term-meta .card-stat { font-size:11px; }
+.term-body { font-family:'SF Mono','Fira Code',Menlo,Consolas,monospace; font-size:12px; line-height:1.75; padding:12px 14px; height:280px; overflow-y:auto; color:#c9e8d2; scrollbar-width:thin; scrollbar-color:#1d3a24 transparent; }
+.term-body::-webkit-scrollbar { width:8px; }
+.term-body::-webkit-scrollbar-thumb { background:#1d3a24; border-radius:4px; }
+.term-line { white-space:nowrap; }
+.term-time { color:#4a5a4c; }
+.term-method { font-weight:700; }
+.m-GET { color:#3fb950; }
+.m-POST { color:#58a6ff; }
+.m-PUT { color:#d29922; }
+.m-PATCH { color:#d2a8ff; }
+.m-DELETE { color:#f85149; }
+.term-path { color:#e6f5ea; }
+.term-dim { color:#5f6f60; }
+.term-cursor { display:inline-block; width:8px; height:14px; background:#3fb950; vertical-align:-2px; animation:termBlink 1.1s infinite; }
+@media (max-width:768px) { .term-body { height:220px; font-size:11px; } }
 </style>
 </head>
 <body>
@@ -164,6 +193,17 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div id="stats" class="stats"></div>
 <div id="error" class="error"></div>
 <div id="success" class="success"></div>
+<div class="terminal">
+<div class="term-bar"><span class="term-dots"><i></i><i></i><i></i></span><span class="term-title">hifi-api — live request log</span><span class="term-live" id="term-live">● LIVE</span></div>
+<div class="term-meta">
+<span>Total <strong id="rq-total">—</strong></span>
+<span>Errors <strong id="rq-errors">—</strong></span>
+<span>p50 <strong id="rq-p50">—</strong></span>
+<span>p95 <strong id="rq-p95">—</strong></span>
+<span id="rq-endpoints"></span>
+</div>
+<div id="rq-recent" class="term-body"></div>
+</div>
 <div id="accounts-container" class="accounts-grid"></div>
 <div class="form-section">
 <h3>Add Account</h3>
@@ -256,20 +296,12 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 
 <div class="form-section">
-<h3>Request Log</h3>
+<h3>Cache</h3>
 <div class="card-stats" style="margin-bottom:12px">
-<span class="card-stat">Total <strong id="rq-total">—</strong></span>
-<span class="card-stat">Errors <strong id="rq-errors">—</strong></span>
-<span class="card-stat">p50 <strong id="rq-p50">—</strong></span>
-<span class="card-stat">p95 <strong id="rq-p95">—</strong></span>
-</div>
-<div class="card-stats" style="margin-bottom:12px" id="rq-endpoints"></div>
-<div id="rq-recent" style="font-family:monospace;font-size:11px;line-height:1.7;max-height:220px;overflow-y:auto"></div>
-<div class="card-stats" style="margin-top:12px">
 <span class="card-stat">Cache hits <strong id="cc-hits">—</strong></span>
 <span class="card-stat">Misses <strong id="cc-misses">—</strong></span>
 </div>
-<button class="btn" onclick="clearCache()" id="clearCacheBtn" style="margin-top:8px">Clear Cache</button>
+<button class="btn" onclick="clearCache()" id="clearCacheBtn">Clear Cache</button>
 </div>
 
 <div class="test-results-section" id="testResultsSection" style="display:none">
@@ -1012,15 +1044,30 @@ async function loadRequestLog() {
         document.getElementById('rq-p95').textContent = r.p95_ms != null ? r.p95_ms + 'ms' : '—';
         var ep = '';
         for (var e of (r.by_endpoint || []).slice(0, 8)) {
-            ep += '<span class="card-stat">' + esc(e.endpoint) + ' <strong>' + e.hits + '</strong></span>';
+            ep += '<span>' + esc(e.endpoint) + ' <strong>×' + e.hits + '</strong></span>';
         }
-        document.getElementById('rq-endpoints').innerHTML = ep || '<span class="card-stat">no traffic yet</span>';
+        document.getElementById('rq-endpoints').innerHTML = ep;
         var rows = '';
         for (var q of (r.recent || [])) {
             var cls = q.status >= 500 ? 'test-fail' : (q.status >= 400 ? 'test-pending' : 'test-pass');
-            rows += '<div><span class="' + cls + '">' + q.status + '</span> ' + q.method + ' ' + esc(q.path) + ' <span style="color:#8b949e">' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
+            var t = '';
+            if (q.ts) {
+                var d = new Date(q.ts * 1000);
+                t = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+            }
+            rows += '<div class="term-line"><span class="term-time">' + t + '</span> ' +
+                '<span class="term-method m-' + q.method + '">' + q.method + '</span> ' +
+                '<span class="term-path">' + esc(q.path) + '</span> ' +
+                '<span class="' + cls + '">' + q.status + '</span> ' +
+                '<span class="term-dim">' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
         }
-        document.getElementById('rq-recent').innerHTML = rows || '<span style="color:#8b949e">no traffic yet</span>';
+        var box = document.getElementById('rq-recent');
+        if (rows) {
+            box.innerHTML = rows + '<div class="term-line"><span class="term-dim">$</span> <span class="term-cursor"></span></div>';
+            box.scrollTop = box.scrollHeight;
+        } else {
+            box.innerHTML = '<div class="term-line"><span class="term-dim">$ waiting for traffic…</span> <span class="term-cursor"></span></div>';
+        }
     } catch(e) {}
 }
 
