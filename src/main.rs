@@ -291,6 +291,7 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/proxies", get(crate::admin::proxies::proxy_status))
         .route("/alerts", get(crate::admin::alerts::alert_status))
         .route("/alerts/test", post(crate::admin::alerts::alert_test))
+        .route("/alerts/report", post(crate::admin::alerts::alert_report))
         .route("/cache", get(crate::admin::cache::cache_stats))
         .route("/cache/clear", post(crate::admin::cache::cache_clear))
         .route("/keys", get(crate::admin::api_keys::list_keys).post(crate::admin::api_keys::create_key))

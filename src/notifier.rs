@@ -115,6 +115,71 @@ impl Notifier {
         self.send_throttled("healed", payload).await;
     }
 
+    /// Manual on-demand report from the admin panel (bypasses throttle).
+    pub async fn send_report(&self, payload: Value) -> Result<(), String> {
+        if self.webhook_url.is_empty() {
+            return Err("DISCORD_WEBHOOK_URL is not set".into());
+        }
+        self.client
+            .post(&self.webhook_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send Discord report: {}", e))?;
+        Ok(())
+    }
+
+    /// Overall health snapshot. All values pre-aggregated by the caller —
+    /// no account identities in here.
+    pub fn status_report(
+        healthy: usize,
+        total: usize,
+        rate_limited: usize,
+        total_requests: u64,
+        total_errors: u64,
+        cache_hits: u64,
+        cache_misses: u64,
+        proxy_summary: String,
+        limits_summary: String,
+    ) -> Value {
+        let ok = healthy > 0;
+        Self::embed(
+            if ok {
+                "📊 Status — operational"
+            } else {
+                "📊 Status — DOWN"
+            },
+            "On-demand snapshot from the admin panel.",
+            if ok { 0x1F6FEB } else { 0xF85149 },
+            vec![
+                json!({"name": "Accounts", "value": format!("{}/{} healthy · {} cooling down", healthy, total, rate_limited), "inline": true}),
+                json!({"name": "Traffic", "value": format!("{} requests · {} errors", total_requests, total_errors), "inline": true}),
+                json!({"name": "Cache", "value": format!("{} hits · {} misses", cache_hits, cache_misses), "inline": true}),
+                json!({"name": "Proxies", "value": proxy_summary, "inline": true}),
+                json!({"name": "Limits", "value": limits_summary, "inline": false}),
+            ],
+        )
+    }
+
+    /// Per-account roster. Accounts are codenamed TIDAL-1, TIDAL-2, … in
+    /// stable id order — real labels, user IDs and credentials never leave
+    /// the server. Caller passes one line per account.
+    pub fn accounts_report(total: usize, lines: Vec<(String, String)>) -> Value {
+        let mut fields = Vec::new();
+        for (code, status) in lines.into_iter().take(25) {
+            fields.push(json!({"name": code, "value": status, "inline": true}));
+        }
+        if fields.is_empty() {
+            fields.push(json!({"name": "No accounts", "value": "Add one via the admin panel.", "inline": false}));
+        }
+        Self::embed(
+            "👥 Accounts roster",
+            &format!("{} account(s). Codenames are stable per id order within a report.", total),
+            0x1F6FEB,
+            fields,
+        )
+    }
+
     /// Manual test from the admin panel (bypasses throttle).
     pub async fn send_test(&self) -> Result<(), String> {
         if self.webhook_url.is_empty() {

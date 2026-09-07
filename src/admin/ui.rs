@@ -270,6 +270,8 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">Notifies on account 403 (suspension risk) and all-accounts-down. Set <span style="font-family:monospace">DISCORD_WEBHOOK_URL</span> and restart to enable.</p>
 <button class="btn" onclick="testAlert()" id="alertTestBtn">Send Test Alert</button>
+<button class="btn" onclick="sendReport('status')" id="reportStatusBtn" style="margin-left:8px">Send Status</button>
+<button class="btn" onclick="sendReport('accounts')" id="reportAccountsBtn" style="margin-left:8px">Send Accounts</button>
 </div>
 
 <div class="form-section">
@@ -883,6 +885,26 @@ async function loadAlertStatus() {
         var a = (await res.json()).alerts || {};
         document.getElementById('al-discord').textContent = a.discord_configured ? 'Configured' : 'Not set';
     } catch(e) {}
+}
+
+async function sendReport(kind) {
+    var btn = document.getElementById(kind === 'status' ? 'reportStatusBtn' : 'reportAccountsBtn');
+    btn.textContent = 'Sending...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/alerts/report', { method: 'POST', headers: headers(), body: JSON.stringify({ kind: kind }) });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Report sent!';
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = kind === 'status' ? 'Send Status' : 'Send Accounts';
+        btn.disabled = false;
+    }
 }
 
 async function testAlert() {
