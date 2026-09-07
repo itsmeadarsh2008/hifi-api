@@ -20,6 +20,10 @@ pub struct LogEntry {
     pub ts: i64,
     pub method: String,
     pub path: String,
+    /// Track/resource identifier when the request names one
+    /// (path id for /trackManifests/{id} and /dash/{id},
+    /// `id=` or `s=` query value otherwise). Empty when none.
+    pub detail: String,
     pub status: u16,
     pub latency_ms: u64,
     pub client_ip: String,
@@ -59,6 +63,7 @@ impl RequestLog {
         let mut by_endpoint: HashMap<String, usize> = HashMap::new();
         let mut by_status: HashMap<String, usize> = HashMap::new();
         let mut by_ip: HashMap<String, usize> = HashMap::new();
+        let mut by_track: HashMap<String, usize> = HashMap::new();
         let mut latencies: Vec<u64> = Vec::with_capacity(total);
         let mut errors: u64 = 0;
 
@@ -66,6 +71,9 @@ impl RequestLog {
             *by_endpoint.entry(e.path.clone()).or_default() += 1;
             *by_status.entry(e.status.to_string()).or_default() += 1;
             *by_ip.entry(e.client_ip.clone()).or_default() += 1;
+            if !e.detail.is_empty() {
+                *by_track.entry(e.detail.clone()).or_default() += 1;
+            }
             latencies.push(e.latency_ms);
             if e.status >= 400 {
                 errors += 1;
@@ -85,6 +93,8 @@ impl RequestLog {
         top_endpoints.sort_by(|a, b| b.1.cmp(&a.1));
         let mut top_ips: Vec<(String, usize)> = by_ip.into_iter().collect();
         top_ips.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut top_tracks: Vec<(String, usize)> = by_track.into_iter().collect();
+        top_tracks.sort_by(|a, b| b.1.cmp(&a.1));
 
         let recent: Vec<Value> = entries
             .iter()
@@ -95,6 +105,7 @@ impl RequestLog {
                     "ts": e.ts,
                     "method": e.method,
                     "path": e.path,
+                    "detail": e.detail,
                     "status": e.status,
                     "latency_ms": e.latency_ms,
                     "client_ip": e.client_ip,
@@ -110,6 +121,7 @@ impl RequestLog {
             "by_endpoint": top_endpoints.into_iter().take(20).map(|(k, v)| json!({"endpoint": k, "hits": v})).collect::<Vec<_>>(),
             "by_status": by_status,
             "top_ips": top_ips.into_iter().take(10).map(|(k, v)| json!({"ip": k, "hits": v})).collect::<Vec<_>>(),
+            "top_tracks": top_tracks.into_iter().take(10).map(|(k, v)| json!({"id": k, "hits": v})).collect::<Vec<_>>(),
             "recent": recent,
         })
     }
@@ -133,6 +145,34 @@ pub fn normalize_path(path: &str) -> String {
     format!("/{}/{}", segs[0], segs[1])
 }
 
+/// Pull the song/resource identifier out of a request so the log shows
+/// *what* was requested, not just the endpoint shape:
+/// path id for /trackManifests/{id} and /dash/{id}, else the `id=` query
+/// value, else the search text (`s=`). Truncated to 64 chars.
+fn extract_detail(path: &str, query: Option<&str>) -> String {
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.len() >= 2 && (segs[0] == "trackManifests" || segs[0] == "dash") {
+        return segs[1].chars().take(64).collect();
+    }
+    if let Some(q) = query {
+        let mut search = None;
+        for (k, v) in form_urlencoded::parse(q.as_bytes()) {
+            if k == "id" && !v.is_empty() {
+                return v.chars().take(64).collect();
+            }
+            if k == "s" && search.is_none() {
+                search = Some(v.to_string());
+            }
+        }
+        if let Some(s) = search {
+            if !s.is_empty() {
+                return s.chars().take(64).collect();
+            }
+        }
+    }
+    String::new()
+}
+
 pub async fn log_requests(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -142,6 +182,7 @@ pub async fn log_requests(
     let method = req.method().to_string();
     let raw_path = req.uri().path().to_string();
     let path = normalize_path(&raw_path);
+    let detail = extract_detail(&raw_path, req.uri().query());
     let ip = ip_limiter::client_ip(&state, &req, addr).to_string();
     let start = Instant::now();
 
@@ -151,6 +192,7 @@ pub async fn log_requests(
         ts: chrono::Utc::now().timestamp(),
         method,
         path,
+        detail,
         status: resp.status().as_u16(),
         latency_ms: start.elapsed().as_millis() as u64,
         client_ip: ip,

@@ -175,6 +175,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .m-PATCH { color:#d2a8ff; }
 .m-DELETE { color:#f85149; }
 .term-path { color:#e6f5ea; }
+.term-id { color:#d2a8ff; }
 .term-dim { color:#5f6f60; }
 .term-cursor { display:inline-block; width:8px; height:14px; background:#3fb950; vertical-align:-2px; animation:termBlink 1.1s infinite; }
 @media (max-width:768px) { .term-body { height:220px; font-size:11px; } }
@@ -201,6 +202,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <span>p50 <strong id="rq-p50">—</strong></span>
 <span>p95 <strong id="rq-p95">—</strong></span>
 <span id="rq-endpoints"></span>
+<span id="rq-tracks" style="color:#d2a8ff"></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
 </div>
@@ -1069,6 +1071,11 @@ async function loadRequestLog() {
             ep += '<span>' + esc(e.endpoint) + ' <strong>×' + e.hits + '</strong></span>';
         }
         document.getElementById('rq-endpoints').innerHTML = ep;
+        var tt = '';
+        for (var t of (r.top_tracks || []).slice(0, 5)) {
+            tt += '<span>#' + esc(t.id) + ' <strong>×' + t.hits + '</strong></span>';
+        }
+        document.getElementById('rq-tracks').innerHTML = tt ? '<span style="color:#5f6f60">top:</span> ' + tt : '';
         var rows = '';
         for (var q of (r.recent || [])) {
             var cls = q.status >= 500 ? 'test-fail' : (q.status >= 400 ? 'test-pending' : 'test-pass');
@@ -1079,7 +1086,8 @@ async function loadRequestLog() {
             }
             rows += '<div class="term-line"><span class="term-time">' + t + '</span> ' +
                 '<span class="term-method m-' + q.method + '">' + q.method + '</span> ' +
-                '<span class="term-path">' + esc(q.path) + '</span> ' +
+                '<span class="term-path">' + esc(q.path) + '</span>' +
+                (q.detail ? ' <span class="term-id">#' + esc(q.detail) + '</span>' : '') + ' ' +
                 '<span class="' + cls + '">' + q.status + '</span> ' +
                 '<span class="term-dim">' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
         }
