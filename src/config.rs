@@ -12,6 +12,7 @@ pub struct Config {
     pub proxies_file: PathBuf,
     pub fallback_to_direct: bool,
     pub max_retries: u32,
+    pub discord_webhook_url: String,
     pub api_version: String,
 }
 
@@ -45,6 +46,7 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(2)
             .max(1);
+        let discord_webhook_url = std::env::var("DISCORD_WEBHOOK_URL").unwrap_or_default();
 
         Self {
             database_url,
@@ -57,6 +59,7 @@ impl Config {
             proxies_file,
             fallback_to_direct,
             max_retries,
+            discord_webhook_url,
             api_version: "2.10".into(),
         }
     }

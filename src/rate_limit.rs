@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -10,6 +10,7 @@ pub struct RateLimitSettings {
     pub tidal_burst: AtomicU64,
     pub cooldown_429_secs: AtomicI64,
     pub cooldown_403_secs: AtomicI64,
+    pub auto_heal: AtomicBool,
 }
 
 impl RateLimitSettings {
@@ -21,6 +22,7 @@ impl RateLimitSettings {
             tidal_burst: AtomicU64::new(env_u64("TIDAL_BURST", 24)),
             cooldown_429_secs: AtomicI64::new(env_i64("COOLDOWN_429_SECS", 90)),
             cooldown_403_secs: AtomicI64::new(env_i64("COOLDOWN_403_SECS", 180)),
+            auto_heal: AtomicBool::new(env_bool("AUTO_HEAL", true)),
         }
     }
 
@@ -32,6 +34,7 @@ impl RateLimitSettings {
             "tidal_burst": self.tidal_burst.load(Ordering::Relaxed),
             "cooldown_429_secs": self.cooldown_429_secs.load(Ordering::Relaxed),
             "cooldown_403_secs": self.cooldown_403_secs.load(Ordering::Relaxed),
+            "auto_heal": self.auto_heal.load(Ordering::Relaxed),
         })
     }
 
@@ -53,6 +56,9 @@ impl RateLimitSettings {
         }
         if let Some(v) = first_opt_i64(updates, &["cooldown_403_secs"])? {
             self.cooldown_403_secs.store(v.max(0), Ordering::Relaxed);
+        }
+        if let Some(v) = first_opt_bool(updates, &["auto_heal"])? {
+            self.auto_heal.store(v, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -91,6 +97,13 @@ impl RateLimitSettings {
                         self.cooldown_403_secs.store(v, Ordering::Relaxed);
                     }
                 }
+                "auto_heal" => {
+                    if value == "true" {
+                        self.auto_heal.store(true, Ordering::Relaxed);
+                    } else if value == "false" {
+                        self.auto_heal.store(false, Ordering::Relaxed);
+                    }
+                }
                 "tidal_rps" => {
                     if let Some(v) = v_u64 {
                         self.tidal_rps.store(v, Ordering::Relaxed);
@@ -114,6 +127,7 @@ impl RateLimitSettings {
             ("tidal_burst", self.tidal_burst.load(Ordering::Relaxed).to_string()),
             ("cooldown_429_secs", self.cooldown_429_secs.load(Ordering::Relaxed).to_string()),
             ("cooldown_403_secs", self.cooldown_403_secs.load(Ordering::Relaxed).to_string()),
+            ("auto_heal", self.auto_heal.load(Ordering::Relaxed).to_string()),
         ];
         for (key, value) in entries {
             let _ = sqlx::query(
@@ -136,6 +150,16 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .max(1)
 }
 
+fn env_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| {
+            let v = v.to_lowercase();
+            v == "true" || v == "1" || v == "yes"
+        })
+        .unwrap_or(default)
+}
+
 fn env_i64(key: &str, default: i64) -> i64 {
     std::env::var(key)
         .ok()
@@ -154,6 +178,22 @@ fn first_opt_u64(obj: &Value, keys: &[&str]) -> Result<Option<u64>, String> {
                     .as_u64()
                     .map(Some)
                     .ok_or_else(|| format!("{} must be a positive integer", key));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn first_opt_bool(obj: &Value, keys: &[&str]) -> Result<Option<bool>, String> {
+    for key in keys {
+        match obj.get(key) {
+            None => continue,
+            Some(v) if v.is_null() => return Ok(None),
+            Some(v) => {
+                return v
+                    .as_bool()
+                    .map(Some)
+                    .ok_or_else(|| format!("{} must be a boolean", key));
             }
         }
     }

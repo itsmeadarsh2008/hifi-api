@@ -1,12 +1,17 @@
 mod account_manager;
 mod admin;
+mod api_keys;
+mod autoheal;
 mod anti_ban;
 mod config;
 mod db;
 mod error;
+mod cache;
 mod ip_limiter;
+mod notifier;
 mod proxy_manager;
 mod rate_limit;
+mod request_log;
 mod routes;
 mod setup;
 mod tidal_client;
@@ -18,15 +23,15 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::Method;
 use axum::middleware;
-use axum::routing::{any, get, patch, post, put};
+use axum::routing::{any, delete, get, patch, post, put};
 use axum::{Json, Router};
-use reqwest::Client;
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::account_manager::{AccountManager, SwitchingWeights};
+use crate::api_keys::ApiKeyManager;
 use crate::config::Config;
 use crate::token_manager::TokenManager;
 
@@ -35,10 +40,14 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub account_manager: Arc<AccountManager>,
     pub token_manager: Arc<TokenManager>,
+    pub api_keys: Arc<ApiKeyManager>,
     pub tidal_client: Arc<tidal_client::TidalClient>,
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
+    pub notifier: Arc<notifier::Notifier>,
+    pub cache: Arc<cache::ResponseCache>,
     pub rate_limits: Arc<rate_limit::RateLimitSettings>,
+    pub request_log: Arc<request_log::RequestLog>,
     pub db: Option<sqlx::SqlitePool>,
     pub setup_sessions: admin::setup::Sessions,
 }
@@ -73,16 +82,12 @@ async fn main() {
         }
     };
 
-    let http_client = Client::builder()
-        .gzip(true)
-        .http2_prior_knowledge()
-        .http2_adaptive_window(true)
-        .pool_max_idle_per_host(500)
-        .pool_idle_timeout(std::time::Duration::from_secs(30))
-        .user_agent("okhttp/5.3.2")
-        .build()
-        .expect("Failed to build HTTP client");
-    let http_client = Arc::new(http_client);
+    // ProxyManager owns the shared HTTP client (direct by default; proxied
+    // when USE_PROXIES=true). The initial proxy resolve runs in the background
+    // so startup is never blocked on proxy tests.
+    let proxy_manager = Arc::new(proxy_manager::ProxyManager::new(config.clone()));
+    proxy_manager.spawn_initial_resolve();
+    let http_client = Arc::new(proxy_manager.client());
 
     let switching_weights = SwitchingWeights::default();
     let account_manager = Arc::new(AccountManager::new(db.clone(), switching_weights));
@@ -137,6 +142,11 @@ async fn main() {
     let token_manager = Arc::new(TokenManager::new(db.clone()));
     token_manager.set_account_manager(account_manager.clone());
 
+    let api_keys = Arc::new(ApiKeyManager::new(db.clone()));
+    if let Err(e) = api_keys.load_from_db().await {
+        tracing::warn!("Could not load API keys from DB: {}", e);
+    }
+
     let rate_limits = Arc::new(rate_limit::RateLimitSettings::from_env());
     if let Some(db) = &db {
         rate_limits.load_from_db(db).await;
@@ -157,31 +167,49 @@ async fn main() {
         });
     }
 
+    let notifier = notifier::Notifier::new(config.discord_webhook_url.clone());
+
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
-        (*http_client).clone(),
+        proxy_manager.clone(),
         token_manager.clone(),
         account_manager.clone(),
         anti_ban.clone(),
         rate_limits.clone(),
+        notifier.clone(),
         config.clone(),
     ));
-
-    let proxy_manager = Arc::new(proxy_manager::ProxyManager::new(config.clone()));
 
     let state = AppState {
         config: config.clone(),
         account_manager: account_manager.clone(),
         token_manager: token_manager.clone(),
+        api_keys: api_keys.clone(),
+        notifier: notifier.clone(),
         tidal_client: tidal_client.clone(),
-        proxy_manager,
+        proxy_manager: proxy_manager.clone(),
         anti_ban,
-        rate_limits,
+        cache: Arc::new(cache::ResponseCache::new()),
+        rate_limits: rate_limits.clone(),
+        request_log: Arc::new(request_log::RequestLog::new()),
         db,
         setup_sessions: admin::setup::new_session_store(),
     };
 
     // Start token pre-warming background task
-    token_manager.start_prewarm_loop(account_manager, http_client).await;
+    token_manager
+        .clone()
+        .start_prewarm_loop(account_manager.clone(), proxy_manager.clone())
+        .await;
+
+    // Start auto-heal background task (recovers system-disabled accounts)
+    autoheal::start_autoheal_loop(
+        account_manager.clone(),
+        token_manager.clone(),
+        proxy_manager.clone(),
+        rate_limits.clone(),
+        notifier.clone(),
+    )
+    .await;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -215,12 +243,25 @@ async fn main() {
         .route("/admin", get(crate::admin::ui::admin_index))
         // Admin API routes (auth-protected)
         .nest("/admin", admin_api(state.clone()))
+        // Innermost: response cache (inside the limiters, so limits apply uniformly).
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            cache::cache_responses,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_keys::ApiKeyManager::enforce_api_key,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             ip_limiter::enforce_ip_rate_limit,
         ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            request_log::log_requests,
+        ))
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -247,6 +288,18 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
         .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
+        .route("/proxies", get(crate::admin::proxies::proxy_status))
+        .route("/alerts", get(crate::admin::alerts::alert_status))
+        .route("/alerts/test", post(crate::admin::alerts::alert_test))
+        .route("/alerts/report", post(crate::admin::alerts::alert_report))
+        .route("/cache", get(crate::admin::cache::cache_stats))
+        .route("/cache/clear", post(crate::admin::cache::cache_clear))
+        .route("/keys", get(crate::admin::api_keys::list_keys).post(crate::admin::api_keys::create_key))
+        .route("/keys/{id}", delete(crate::admin::api_keys::remove_key))
+        .route("/keys/{id}/toggle", put(crate::admin::api_keys::toggle_key))
+        .route("/backup", get(crate::admin::backup::download_backup))
+        .route("/backup/restore", post(crate::admin::backup::restore_backup))
+        .route("/requests", get(crate::admin::requests::get_requests))
         .route(
             "/settings",
             get(crate::admin::settings::get_settings).put(crate::admin::settings::update_settings),

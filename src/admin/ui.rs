@@ -149,6 +149,35 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 
 @keyframes highlightPulse { 0%,100% { border-color:#30363d; } 50% { border-color:#58a6ff; box-shadow:0 0 20px rgba(88,166,255,0.15); } }
 .form-highlight { animation:highlightPulse 1.5s ease; }
+
+.terminal { background:#050805; border:1px solid #1d3a24; border-radius:10px; overflow:hidden; margin-bottom:24px; box-shadow:0 0 24px rgba(63,185,80,0.07); }
+.term-bar { display:flex; align-items:center; gap:10px; padding:9px 14px; background:#0b120c; border-bottom:1px solid #1d3a24; }
+.term-dots { display:flex; gap:6px; }
+.term-dots i { width:10px; height:10px; border-radius:50%; background:#2a3b2d; }
+.term-dots i:nth-child(1) { background:#f85149; }
+.term-dots i:nth-child(2) { background:#d29922; }
+.term-dots i:nth-child(3) { background:#3fb950; }
+.term-title { font-size:11px; color:#7d8a7e; font-family:monospace; flex:1; }
+.term-live { font-size:10px; color:#3fb950; font-family:monospace; letter-spacing:1px; animation:termBlink 2s infinite; }
+@keyframes termBlink { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+.term-meta { display:flex; gap:16px; flex-wrap:wrap; padding:9px 14px; border-bottom:1px solid #142114; font-family:monospace; font-size:11px; color:#5f6f60; }
+.term-meta strong { color:#9fe8b4; font-weight:600; }
+.term-meta .card-stat { font-size:11px; }
+.term-body { font-family:'SF Mono','Fira Code',Menlo,Consolas,monospace; font-size:12px; line-height:1.75; padding:12px 14px; height:280px; overflow-y:auto; color:#c9e8d2; scrollbar-width:thin; scrollbar-color:#1d3a24 transparent; }
+.term-body::-webkit-scrollbar { width:8px; }
+.term-body::-webkit-scrollbar-thumb { background:#1d3a24; border-radius:4px; }
+.term-line { white-space:nowrap; }
+.term-time { color:#4a5a4c; }
+.term-method { font-weight:700; }
+.m-GET { color:#3fb950; }
+.m-POST { color:#58a6ff; }
+.m-PUT { color:#d29922; }
+.m-PATCH { color:#d2a8ff; }
+.m-DELETE { color:#f85149; }
+.term-path { color:#e6f5ea; }
+.term-dim { color:#5f6f60; }
+.term-cursor { display:inline-block; width:8px; height:14px; background:#3fb950; vertical-align:-2px; animation:termBlink 1.1s infinite; }
+@media (max-width:768px) { .term-body { height:220px; font-size:11px; } }
 </style>
 </head>
 <body>
@@ -164,6 +193,17 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div id="stats" class="stats"></div>
 <div id="error" class="error"></div>
 <div id="success" class="success"></div>
+<div class="terminal">
+<div class="term-bar"><span class="term-dots"><i></i><i></i><i></i></span><span class="term-title">hifi-api — live request log</span><span class="term-live" id="term-live">● LIVE</span></div>
+<div class="term-meta">
+<span>Total <strong id="rq-total">—</strong></span>
+<span>Errors <strong id="rq-errors">—</strong></span>
+<span>p50 <strong id="rq-p50">—</strong></span>
+<span>p95 <strong id="rq-p95">—</strong></span>
+<span id="rq-endpoints"></span>
+</div>
+<div id="rq-recent" class="term-body"></div>
+</div>
 <div id="accounts-container" class="accounts-grid"></div>
 <div class="form-section">
 <h3>Add Account</h3>
@@ -208,7 +248,62 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="form-group"><label>403 Cooldown (sec)</label><input type="number" id="rl-403" min="0" placeholder="180"></div>
 </div>
 <p style="font-size:11px;color:#8b949e;margin-bottom:16px">Per-IP limits apply independently to each client IP (excess gets HTTP 429). Tidal limits throttle all upstream requests globally with jitter to avoid bans. Cooldowns park an account after a 429/403.</p>
+<div class="form-group" style="margin-bottom:16px"><label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#c9d1d9"><input type="checkbox" id="rl-autoheal" style="width:auto"> Auto-heal: retry system-disabled accounts (never touches manually-OFF accounts)</label></div>
 <button class="btn btn-primary" onclick="saveRateLimits()">Save Rate Limits</button>
+</div>
+
+<div class="form-section">
+<h3>Proxies</h3>
+<div class="card-stats" style="margin-bottom:12px">
+<span class="card-stat">Status <strong id="px-status">—</strong></span>
+<span class="card-stat">Current <strong id="px-current">—</strong></span>
+<span class="card-stat">Pool <strong id="px-pool">—</strong></span>
+<span class="card-stat">Fails <strong id="px-fails">—</strong></span>
+</div>
+<p style="font-size:11px;color:#8b949e;margin-bottom:0">Optional. Set <span style="font-family:monospace">USE_PROXIES=true</span> + <span style="font-family:monospace">PROXIES_FILE</span> and restart to route Tidal traffic through rotating proxies. Without it, everything goes direct.</p>
+</div>
+
+<div class="form-section">
+<h3>Alerts</h3>
+<div class="card-stats" style="margin-bottom:12px">
+<span class="card-stat">Discord <strong id="al-discord">—</strong></span>
+</div>
+<p style="font-size:11px;color:#8b949e;margin-bottom:12px">Notifies on account 403 (suspension risk) and all-accounts-down. Set <span style="font-family:monospace">DISCORD_WEBHOOK_URL</span> and restart to enable.</p>
+<button class="btn" onclick="testAlert()" id="alertTestBtn">Send Test Alert</button>
+<button class="btn" onclick="sendReport('status')" id="reportStatusBtn" style="margin-left:8px">Send Status</button>
+<button class="btn" onclick="sendReport('accounts')" id="reportAccountsBtn" style="margin-left:8px">Send Accounts</button>
+</div>
+
+<div class="form-section">
+<h3>API Keys</h3>
+<p style="font-size:11px;color:#8b949e;margin-bottom:12px">While no key exists the API stays open. Creating the first key locks all public routes behind <span style="font-family:monospace">X-API-Key</span> (or owner <span style="font-family:monospace">X-Admin-Key</span>). Quota 0 = unlimited.</p>
+<div class="form-row">
+<div class="form-group"><label>Label</label><input type="text" id="new-key-label" placeholder="My app"></div>
+<div class="form-group"><label>Quota (requests, 0 = unlimited)</label><input type="number" id="new-key-quota" min="0" placeholder="0"></div>
+</div>
+<button class="btn btn-primary" onclick="addApiKey()">Create Key</button>
+<div id="keyResult" style="font-size:12px;margin-top:10px;color:#3fb950;word-break:break-all"></div>
+<div id="keys-container" style="margin-top:12px"></div>
+</div>
+
+<div class="form-section">
+<h3>Backup / Restore</h3>
+<p style="font-size:11px;color:#8b949e;margin-bottom:12px">Download a snapshot of the database (accounts, keys, settings), or restore from one. Restore reloads everything live — no restart needed.</p>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<button class="btn" onclick="downloadBackup()">Download Backup</button>
+<button class="btn" onclick="document.getElementById('restoreFile').click()">Restore from File</button>
+<input type="file" id="restoreFile" accept=".db,.sqlite,.sqlite3,application/x-sqlite3" style="display:none" onchange="restoreBackup(event)">
+</div>
+<div id="restoreResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
+</div>
+
+<div class="form-section">
+<h3>Cache</h3>
+<div class="card-stats" style="margin-bottom:12px">
+<span class="card-stat">Cache hits <strong id="cc-hits">—</strong></span>
+<span class="card-stat">Misses <strong id="cc-misses">—</strong></span>
+</div>
+<button class="btn" onclick="clearCache()" id="clearCacheBtn">Clear Cache</button>
 </div>
 
 <div class="test-results-section" id="testResultsSection" style="display:none">
@@ -578,6 +673,7 @@ async function fetchData() {
                             '<span class="card-stat">Requests <strong>' + a.request_count + '</strong></span>' +
                             '<span class="card-stat">Errors <strong>' + a.error_count + '</strong></span>' +
                             '<span class="card-stat">Rate Limited <strong>' + rateStr + '</strong></span>' +
+                            (a.auto_disabled ? '<span class="card-stat">Auto-heal <strong>retrying</strong></span>' : '') +
                             '<span class="card-stat">Token <strong>' + tokenStr + '</strong></span>' +
                             '<span class="card-stat test-badge" id="test-' + a.id + '" onclick="showTestDetails(\'' + a.id + '\')">Test <strong>-</strong></span>' +
                         '</div>' +
@@ -778,6 +874,236 @@ function openOAuthUrl() {
 fetchData();
 setInterval(fetchData, 15000);
 loadRateLimits();
+loadProxyStatus();
+setInterval(loadProxyStatus, 15000);
+loadAlertStatus();
+
+async function loadAlertStatus() {
+    try {
+        var res = await fetch('/admin/alerts', { headers: headers() });
+        if (!res.ok) return;
+        var a = (await res.json()).alerts || {};
+        document.getElementById('al-discord').textContent = a.discord_configured ? 'Configured' : 'Not set';
+    } catch(e) {}
+}
+
+async function sendReport(kind) {
+    var btn = document.getElementById(kind === 'status' ? 'reportStatusBtn' : 'reportAccountsBtn');
+    btn.textContent = 'Sending...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/alerts/report', { method: 'POST', headers: headers(), body: JSON.stringify({ kind: kind }) });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Report sent!';
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = kind === 'status' ? 'Send Status' : 'Send Accounts';
+        btn.disabled = false;
+    }
+}
+
+async function testAlert() {
+    var btn = document.getElementById('alertTestBtn');
+    btn.textContent = 'Sending...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/alerts/test', { method: 'POST', headers: headers() });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Test alert sent!';
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = 'Send Test Alert';
+        btn.disabled = false;
+    }
+}
+loadRequestLog();
+setInterval(loadRequestLog, 15000);
+loadCacheStats();
+setInterval(loadCacheStats, 15000);
+loadApiKeys();
+setInterval(loadApiKeys, 15000);
+
+async function loadApiKeys() {
+    try {
+        var res = await fetch('/admin/keys', { headers: headers() });
+        if (!res.ok) return;
+        var keys = (await res.json()).api_keys || [];
+        var html = '';
+        for (var k of keys) {
+            var quota = (k.quota && k.quota > 0) ? (k.used + '/' + k.quota) : (k.used + '/∞');
+            html += '<div class="cred-row"><span class="cred-key">' + esc(k.label || k.key_prefix) + '</span>' +
+                '<span class="cred-value">' + esc(k.key_prefix) + '… · used ' + quota + ' · ' + (k.is_active ? 'ON' : 'OFF') + '</span>' +
+                '<span style="margin-left:auto;display:flex;gap:6px">' +
+                '<button class="btn" onclick="toggleApiKey(\'' + k.id + '\',' + (!k.is_active) + ')">' + (k.is_active ? 'OFF' : 'ON') + '</button>' +
+                '<button class="btn btn-danger" onclick="removeApiKey(\'' + k.id + '\')">Delete</button>' +
+                '</span></div>';
+        }
+        document.getElementById('keys-container').innerHTML = html || '<span style="font-size:12px;color:#8b949e">No keys — API is open</span>';
+    } catch(e) {}
+}
+
+async function addApiKey() {
+    try {
+        var res = await fetch('/admin/keys', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({ label: document.getElementById('new-key-label').value, quota: parseInt(document.getElementById('new-key-quota').value) || 0 })
+        });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('keyResult').textContent = 'New key (copy now, shown once): ' + data.api_key;
+            document.getElementById('new-key-label').value = '';
+            document.getElementById('new-key-quota').value = '';
+            loadApiKeys();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function toggleApiKey(id, active) {
+    try {
+        var res = await fetch('/admin/keys/' + id + '/toggle', {
+            method: 'PUT', headers: headers(), body: JSON.stringify({ active: active })
+        });
+        if (res.ok) loadApiKeys();
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function removeApiKey(id) {
+    if (!confirm('Delete this API key? Clients using it will get 401.')) return;
+    try {
+        var res = await fetch('/admin/keys/' + id, { method: 'DELETE', headers: headers() });
+        if (res.ok) loadApiKeys();
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function downloadBackup() {
+    try {
+        var res = await fetch('/admin/backup', { headers: headers() });
+        if (!res.ok) { document.getElementById('error').textContent = 'Backup failed: ' + res.status; return; }
+        var blob = await res.blob();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a'); a.href = url; a.download = 'hifi-backup.db'; a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById('success').textContent = 'Backup downloaded';
+    } catch(e) { document.getElementById('error').textContent = e.message; }
+}
+
+async function restoreBackup(e) {
+    var file = e.target.files[0]; if (!file) return;
+    if (!confirm('Restore database from ' + file.name + '? Current accounts, keys and settings will be replaced.')) { e.target.value = ''; return; }
+    try {
+        var buf = await file.arrayBuffer();
+        var res = await fetch('/admin/backup/restore', { method: 'POST', headers: headers(), body: buf });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Restored!';
+            document.getElementById('restoreResult').textContent = '';
+            fetchData();
+            loadApiKeys();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Restore failed';
+        }
+    } catch(err) { document.getElementById('error').textContent = 'Restore error: ' + err.message; }
+    e.target.value = '';
+}
+
+async function clearCache() {
+    var btn = document.getElementById('clearCacheBtn');
+    btn.textContent = 'Clearing...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/cache/clear', { method: 'POST', headers: headers() });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Cache cleared!';
+            loadRequestLog();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = 'Clear Cache';
+        btn.disabled = false;
+    }
+}
+
+async function loadCacheStats() {
+    try {
+        var res = await fetch('/admin/cache', { headers: headers() });
+        if (!res.ok) return;
+        var c = (await res.json()).cache || {};
+        document.getElementById('cc-hits').textContent = c.hits != null ? c.hits : '—';
+        document.getElementById('cc-misses').textContent = c.misses != null ? c.misses : '—';
+    } catch(e) {}
+}
+
+async function loadRequestLog() {
+    try {
+        var res = await fetch('/admin/requests?limit=20', { headers: headers() });
+        if (!res.ok) return;
+        var r = (await res.json()).requests || {};
+        document.getElementById('rq-total').textContent = r.total != null ? r.total : '—';
+        document.getElementById('rq-errors').textContent = r.errors != null ? r.errors : '—';
+        document.getElementById('rq-p50').textContent = r.p50_ms != null ? r.p50_ms + 'ms' : '—';
+        document.getElementById('rq-p95').textContent = r.p95_ms != null ? r.p95_ms + 'ms' : '—';
+        var ep = '';
+        for (var e of (r.by_endpoint || []).slice(0, 8)) {
+            ep += '<span>' + esc(e.endpoint) + ' <strong>×' + e.hits + '</strong></span>';
+        }
+        document.getElementById('rq-endpoints').innerHTML = ep;
+        var rows = '';
+        for (var q of (r.recent || [])) {
+            var cls = q.status >= 500 ? 'test-fail' : (q.status >= 400 ? 'test-pending' : 'test-pass');
+            var t = '';
+            if (q.ts) {
+                var d = new Date(q.ts * 1000);
+                t = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+            }
+            rows += '<div class="term-line"><span class="term-time">' + t + '</span> ' +
+                '<span class="term-method m-' + q.method + '">' + q.method + '</span> ' +
+                '<span class="term-path">' + esc(q.path) + '</span> ' +
+                '<span class="' + cls + '">' + q.status + '</span> ' +
+                '<span class="term-dim">' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
+        }
+        var box = document.getElementById('rq-recent');
+        if (rows) {
+            box.innerHTML = rows + '<div class="term-line"><span class="term-dim">$</span> <span class="term-cursor"></span></div>';
+            box.scrollTop = box.scrollHeight;
+        } else {
+            box.innerHTML = '<div class="term-line"><span class="term-dim">$ waiting for traffic…</span> <span class="term-cursor"></span></div>';
+        }
+    } catch(e) {}
+}
+
+async function loadProxyStatus() {
+    try {
+        var res = await fetch('/admin/proxies', { headers: headers() });
+        if (!res.ok) return;
+        var p = (await res.json()).proxies || {};
+        document.getElementById('px-status').textContent = !p.enabled ? 'Disabled (direct)' : (p.ready ? 'Active' : 'No working proxy');
+        document.getElementById('px-current').textContent = p.current || (p.enabled ? '—' : 'direct');
+        document.getElementById('px-pool').textContent = p.pool_size != null ? p.pool_size : '—';
+        document.getElementById('px-fails').textContent = p.consecutive_fails != null ? p.consecutive_fails : '—';
+    } catch(e) {}
+}
 
 async function loadRateLimits() {
     try {
@@ -791,6 +1117,7 @@ async function loadRateLimits() {
         document.getElementById('rl-tidal-burst').value = r.tidal_burst || 24;
         document.getElementById('rl-429').value = r.cooldown_429_secs || 90;
         document.getElementById('rl-403').value = r.cooldown_403_secs || 180;
+        document.getElementById('rl-autoheal').checked = r.auto_heal !== false;
     } catch(e) {}
 }
 
@@ -833,7 +1160,8 @@ async function saveRateLimits() {
             tidal_rps: parseInt(document.getElementById('rl-tidal-rps').value) || 12,
             tidal_burst: parseInt(document.getElementById('rl-tidal-burst').value) || 24,
             cooldown_429_secs: parseInt(document.getElementById('rl-429').value) || 90,
-            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 180
+            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 180,
+            auto_heal: document.getElementById('rl-autoheal').checked
         }
     };
     try {

@@ -41,6 +41,9 @@ pub async fn list_accounts(
                 "refresh_token": a.refresh_token,
                 "user_id": futures::executor::block_on(async { a.user_id.read().await.clone() }),
                 "is_active": a.is_active.load(std::sync::atomic::Ordering::Relaxed),
+                "auto_disabled": a.auto_disabled.load(std::sync::atomic::Ordering::Relaxed),
+                "heal_failures": a.heal_failures.load(std::sync::atomic::Ordering::Relaxed),
+                "heal_next_retry": a.heal_next_retry.load(std::sync::atomic::Ordering::Relaxed),
                 "request_count": a.request_count.load(std::sync::atomic::Ordering::Relaxed),
                 "error_count": a.error_count.load(std::sync::atomic::Ordering::Relaxed),
                 "rate_limit_hits": a.rate_limit_hits.load(std::sync::atomic::Ordering::Relaxed),
@@ -124,6 +127,9 @@ pub async fn toggle_account(
         .account_manager
         .set_account_active(&id, body.active)
         .await?;
+    // Owner intent wins: a manual toggle always clears the auto-disabled flag,
+    // so auto-heal never overrides an explicit OFF.
+    let _ = state.account_manager.set_auto_disabled(&id, false).await;
     let status = if body.active { "active" } else { "inactive" };
     Ok(Json(json!({ "message": format!("Account {} set to {}", id, status) })))
 }
@@ -138,13 +144,15 @@ pub async fn refresh_account_token(
         .await
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", id)))?;
 
+    let hc = state.tidal_client.working_client().await?;
     match state
         .token_manager
-        .refresh_token(&account, state.tidal_client.http_client())
+        .refresh_token(&account, &hc)
         .await
     {
         Ok(_) => {
             state.account_manager.set_account_active(&id, true).await?;
+            let _ = state.account_manager.set_auto_disabled(&id, false).await;
             Ok(Json(json!({"status": "ok", "message": "Token refreshed, account reactivated"})))
         }
         Err(e) => {
@@ -181,7 +189,7 @@ pub async fn test_all_accounts(
 
     let accounts = state.account_manager.list_accounts().await;
     let country = &state.config.country_code;
-    let client = state.tidal_client.http_client().clone();
+    let client = state.tidal_client.working_client().await?;
     let token_manager = state.token_manager.clone();
 
     let mut handles = Vec::new();
@@ -368,16 +376,15 @@ pub async fn test_account(
     let is_active = account.is_active.load(std::sync::atomic::Ordering::Relaxed);
     let start = Instant::now();
 
+    let hc = state.tidal_client.working_client().await?;
     match state
         .token_manager
-        .get_token(&account, state.tidal_client.http_client())
+        .get_token(&account, &hc)
         .await
     {
         Ok(token) => {
             let token_ms = start.elapsed().as_millis() as u64;
-            let resp = state
-                .tidal_client
-                .http_client()
+            let resp = hc
                 .get("https://api.tidal.com/v1/tracks/1/")
                 .header("authorization", format!("Bearer {}", token))
                 .send()

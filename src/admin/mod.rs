@@ -1,4 +1,10 @@
 pub mod accounts;
+pub mod alerts;
+pub mod backup;
+pub mod api_keys;
+pub mod cache;
+pub mod proxies;
+pub mod requests;
 pub mod setup;
 pub mod settings;
 pub mod stats;

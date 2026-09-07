@@ -114,7 +114,7 @@ pub async fn start_setup(
         .and_then(|b| b.label.clone())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let http_client = state.tidal_client.http_client();
+    let http_client = state.tidal_client.working_client().await?;
 
     let auth_resp: DeviceAuthorization = http_client
         .post("https://auth.tidal.com/v1/oauth2/device_authorization")
@@ -150,7 +150,7 @@ pub async fn start_setup(
     let sessions = state.setup_sessions.clone();
     let sid = session_id.clone();
     let am = state.account_manager.clone();
-    let hc = http_client.clone();
+    let hc = http_client;
 
     tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(600);

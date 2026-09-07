@@ -12,16 +12,15 @@ pub async fn widevine_proxy(
     body: Bytes,
 ) -> Result<Response, AppError> {
     let account = state.account_manager.select_account().await?;
+    let hc = state.tidal_client.working_client().await?;
     let token = state
         .token_manager
-        .get_token(&account, &state.tidal_client.http_client())
+        .get_token(&account, &hc)
         .await?;
 
     let url = "https://api.tidal.com/v2/widevine";
 
-    let mut req = state
-        .tidal_client
-        .http_client()
+    let mut req = hc
         .request(method.clone(), url)
         .header("authorization", format!("Bearer {}", token))
         .body(body.to_vec());
