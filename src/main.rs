@@ -243,6 +243,7 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts/{id}", patch(crate::admin::accounts::update_account).delete(crate::admin::accounts::remove_account))
         .route("/accounts/{id}/toggle", put(crate::admin::accounts::toggle_account))
         .route("/accounts/test-all", post(crate::admin::accounts::test_all_accounts))
+        .route("/accounts/clear-rate-limits", post(crate::admin::accounts::clear_rate_limits))
         .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
         .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
@@ -251,7 +252,10 @@ fn admin_api(state: AppState) -> Router<AppState> {
             get(crate::admin::settings::get_settings).put(crate::admin::settings::update_settings),
         )
         .route("/setup", post(crate::admin::setup::start_setup))
-        .route("/setup/{session}", get(crate::admin::setup::check_setup))
+        .route(
+            "/setup/{session}",
+            get(crate::admin::setup::check_setup).patch(crate::admin::setup::update_setup),
+        )
         .layer(middleware::from_fn_with_state(state, crate::admin::admin_auth))
 }
 

@@ -103,6 +103,9 @@ impl TidalClient {
                 {
                     Ok(t) => t,
                     Err(e) => {
+                        self.account_manager
+                            .mark_account_error(&account.id, &format!("token failure: {:?}", e))
+                            .await;
                         last_account_error = Some(e);
                         failed_ids.push(account.id.clone());
                         break;
@@ -134,6 +137,11 @@ impl TidalClient {
                 match status.as_u16() {
                     401 => {
                         let _ = self.token_manager.refresh_token(&account, &self.http_client).await;
+                        if attempt >= max_retries - 1 {
+                            self.account_manager
+                                .mark_account_error(&account.id, "Tidal 401 unauthorized")
+                                .await;
+                        }
                         continue;
                     }
                     404 => {
@@ -196,6 +204,9 @@ impl TidalClient {
                         if attempt < max_retries - 1 {
                             continue;
                         }
+                        self.account_manager
+                            .mark_account_error(&account.id, "Tidal 403 forbidden")
+                            .await;
                         failed_ids.push(account.id.clone());
                         last_account_error = Some(AppError::UpstreamError(
                             status,
@@ -208,6 +219,12 @@ impl TidalClient {
                             if attempt < max_retries - 1 && status.as_u16() >= 500 {
                                 continue;
                             }
+                            self.account_manager
+                                .mark_account_error(
+                                    &account.id,
+                                    &format!("Tidal HTTP {}", status.as_u16()),
+                                )
+                                .await;
                             failed_ids.push(account.id.clone());
                             last_account_error = Some(AppError::UpstreamError(
                                 status,

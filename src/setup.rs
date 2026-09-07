@@ -24,20 +24,50 @@ struct DeviceAuthorization {
     expires_in: i64,
 }
 
+fn de_string_or_int<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    struct S;
+    impl Visitor<'_> for S {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or integer")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<String, E> {
+            Ok(v.to_owned())
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<String, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+    }
+    d.deserialize_any(S)
+}
+
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct TokenResponse {
     access_token: String,
     refresh_token: String,
+    #[serde(default)]
     expires_in: i64,
+    #[serde(default)]
     token_type: String,
-    user: UserInfo,
+    #[serde(default)]
+    user: Option<UserInfo>,
 }
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct UserInfo {
-    #[serde(rename = "userId")]
+    #[serde(rename = "userId", deserialize_with = "de_string_or_int")]
     user_id: String,
     #[serde(default)]
     country_code: String,
@@ -103,7 +133,10 @@ pub async fn run_setup(
     };
 
     let refresh_token = token_resp.refresh_token;
-    let user_id = token_resp.user.user_id;
+    let user_id = token_resp
+        .user
+        .map(|u| u.user_id)
+        .unwrap_or_else(|| "unknown".into());
 
     account_manager
         .add_account(

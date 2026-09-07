@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -146,8 +147,24 @@ pub async fn refresh_account_token(
             state.account_manager.set_account_active(&id, true).await?;
             Ok(Json(json!({"status": "ok", "message": "Token refreshed, account reactivated"})))
         }
-        Err(e) => Ok(Json(json!({"status": "error", "message": format!("{:?}", e)}))),
+        Err(e) => {
+            state
+                .account_manager
+                .mark_account_error(&id, &format!("manual refresh failed: {:?}", e))
+                .await;
+            Err(AppError::UpstreamError(
+                StatusCode::BAD_GATEWAY,
+                format!("Token refresh failed: {:?}", e),
+            ))
+        }
     }
+}
+
+pub async fn clear_rate_limits(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, AppError> {
+    let cleared = state.account_manager.clear_all_rate_limits().await;
+    Ok(Json(json!({"message": format!("Cleared rate-limit cooldowns on {} account(s)", cleared), "cleared": cleared})))
 }
 
 pub async fn test_all_accounts(

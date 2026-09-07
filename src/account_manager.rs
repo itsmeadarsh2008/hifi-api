@@ -91,6 +91,18 @@ pub struct DbAccountRow {
     pub expires_at: Option<i64>,
 }
 
+/// Extract a numeric user id from an auto-generated "Tidal Account (<id>)" label.
+fn user_id_from_label(label: &str) -> Option<&str> {
+    let inner = label
+        .strip_prefix("Tidal Account (")?
+        .strip_suffix(')')?;
+    if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit()) {
+        Some(inner)
+    } else {
+        None
+    }
+}
+
 pub struct AccountManager {
     accounts: RwLock<Vec<Arc<AccountState>>>,
     weights: SwitchingWeights,
@@ -125,13 +137,28 @@ impl AccountManager {
 
         let mut accounts = self.accounts.write().await;
         for row in rows {
+            // Backfill user_id for accounts created before it was persisted
+            // (label was "Tidal Account (<id>)").
+            let user_id = match row.user_id {
+                Some(uid) => Some(uid),
+                None => user_id_from_label(&row.label).map(|s| s.to_string()),
+            };
+            if user_id.is_some() && self.db.is_some() {
+                if let Some(db) = &self.db {
+                    let _ = sqlx::query("UPDATE accounts SET user_id = ? WHERE id = ? AND user_id IS NULL")
+                        .bind(&user_id)
+                        .bind(&row.id)
+                        .execute(db)
+                        .await;
+                }
+            }
             let state = Arc::new(AccountState::new(
                 row.id,
                 row.label,
                 row.client_id,
                 row.client_secret,
                 row.refresh_token,
-                row.user_id,
+                user_id,
                 row.is_active != 0,
                 row.notes,
             ));
@@ -164,21 +191,22 @@ impl AccountManager {
             client_id.clone(),
             client_secret.clone(),
             refresh_token.clone(),
-            user_id,
+            user_id.clone(),
             true,
             String::new(),
         ));
 
         if let Some(db) = &self.db {
             sqlx::query(
-                "INSERT INTO accounts (id, label, client_id, client_secret, refresh_token, is_active, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+                "INSERT INTO accounts (id, label, client_id, client_secret, refresh_token, user_id, is_active, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
             )
             .bind(&id)
             .bind(&label)
             .bind(&client_id)
             .bind(&client_secret)
             .bind(&refresh_token)
+            .bind(&user_id)
             .bind(now)
             .bind(now)
             .execute(db)
@@ -377,6 +405,18 @@ impl AccountManager {
         } else {
             Err(AppError::NotFound(format!("Account {} not found", id)))
         }
+    }
+
+    /// Emergency reset: clear all per-account rate-limit cooldowns.
+    pub async fn clear_all_rate_limits(&self) -> usize {
+        let accounts = self.accounts.read().await;
+        let mut cleared = 0;
+        for a in accounts.iter() {
+            if a.rate_limited_until.swap(0, Ordering::Relaxed) > 0 {
+                cleared += 1;
+            }
+        }
+        cleared
     }
 
     pub async fn list_accounts(&self) -> Vec<Arc<AccountState>> {

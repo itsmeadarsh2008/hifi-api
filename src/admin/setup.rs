@@ -31,6 +31,7 @@ pub enum SetupStatus {
 pub struct SetupSession {
     pub device_code: String,
     pub status: SetupStatus,
+    pub label: Option<String>,
 }
 
 pub type Sessions = Arc<RwLock<HashMap<String, SetupSession>>>;
@@ -51,28 +52,68 @@ struct DeviceAuthorization {
     expires_in: i64,
 }
 
+fn de_string_or_int<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    struct S;
+    impl Visitor<'_> for S {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or integer")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<String, E> {
+            Ok(v.to_owned())
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<String, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<String, E> {
+            Ok(v.to_string())
+        }
+    }
+    d.deserialize_any(S)
+}
+
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct TokenResponse {
     access_token: String,
     refresh_token: String,
+    #[serde(default)]
     expires_in: i64,
+    #[serde(default)]
     token_type: String,
-    user: UserInfo,
+    #[serde(default)]
+    user: Option<UserInfo>,
 }
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct UserInfo {
-    #[serde(rename = "userId")]
+    #[serde(rename = "userId", deserialize_with = "de_string_or_int")]
     user_id: String,
     #[serde(default)]
     country_code: String,
 }
 
+#[derive(Deserialize, Default)]
+pub struct StartSetupRequest {
+    pub label: Option<String>,
+}
+
 pub async fn start_setup(
     State(state): State<AppState>,
+    body: Option<Json<StartSetupRequest>>,
 ) -> Result<Json<Value>, AppError> {
+    let custom_label = body
+        .and_then(|b| b.label.clone())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let http_client = state.tidal_client.http_client();
 
     let auth_resp: DeviceAuthorization = http_client
@@ -101,6 +142,7 @@ pub async fn start_setup(
             SetupSession {
                 device_code: device_code.clone(),
                 status: SetupStatus::Pending,
+                label: custom_label.clone(),
             },
         );
     }
@@ -149,8 +191,18 @@ pub async fn start_setup(
                 continue;
             }
 
-            let token_resp: TokenResponse = match res.json().await {
-                Ok(t) => t,
+            let token_resp: TokenResponse = match res.text().await {
+                Ok(text) => match serde_json::from_str(&text) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!("OAuth token parse failed: {} body: {}", e, &text[..text.len().min(300)]);
+                        let mut sessions = sessions.write().await;
+                        if let Some(session) = sessions.get_mut(&sid) {
+                            session.status = SetupStatus::Error(format!("Parse failed: {}", e));
+                        }
+                        break;
+                    }
+                },
                 Err(e) => {
                     let mut sessions = sessions.write().await;
                     if let Some(session) = sessions.get_mut(&sid) {
@@ -160,8 +212,20 @@ pub async fn start_setup(
                 }
             };
 
-            let user_id = token_resp.user.user_id.clone();
-            let label = format!("Tidal Account ({})", user_id);
+            let user_id = token_resp
+                .user
+                .as_ref()
+                .map(|u| u.user_id.clone())
+                .unwrap_or_else(|| "unknown".into());
+            // Read the live session label (may have been updated via PATCH while polling).
+            let live_label = sessions
+                .read()
+                .await
+                .get(&sid)
+                .and_then(|s| s.label.clone());
+            let label = live_label
+                .or(custom_label.clone())
+                .unwrap_or_else(|| format!("Tidal Account ({})", user_id));
 
             match am
                 .add_account(
@@ -226,4 +290,26 @@ pub async fn check_setup(
             "error": msg,
         }))),
     }
+}
+
+pub async fn update_setup(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<StartSetupRequest>,
+) -> Result<Json<Value>, AppError> {
+    let mut sessions = state.setup_sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| AppError::NotFound("Session not found".into()))?;
+
+    if !matches!(session.status, SetupStatus::Pending) {
+        return Err(AppError::BadRequest("Session is no longer pending".into()));
+    }
+
+    session.label = body
+        .label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    Ok(Json(json!({"status": "pending"})))
 }

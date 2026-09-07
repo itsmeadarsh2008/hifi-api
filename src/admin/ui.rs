@@ -31,6 +31,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 
 .card-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:#1c2128; border-bottom:1px solid #30363d; flex-wrap:wrap; gap:10px; }
 .card-header .left { display:flex; align-items:center; gap:10px; min-width:0; }
+.acc-num { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px; padding:0 6px; border-radius:11px; background:#21262d; border:1px solid #30363d; color:#8b949e; font-size:11px; font-weight:700; flex-shrink:0; }
 .card-header .label { font-weight:600; font-size:14px; color:#f0f6fc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .card-body { padding:18px 20px; }
@@ -72,6 +73,10 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .form-group label { display:block; font-size:11px; color:#8b949e; margin-bottom:4px; font-weight:500; text-transform:uppercase; letter-spacing:0.3px; }
 .form-group input { width:100%; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:10px 12px; border-radius:6px; font-size:13px; transition:border-color 0.15s; }
 .form-group input:focus { outline:none; border-color:#1f6feb; box-shadow:0 0 0 3px rgba(31,111,235,0.15); }
+.pw-wrap { position:relative; }
+.pw-wrap input { padding-right:38px; }
+.pw-toggle { position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:#8b949e; cursor:pointer; font-size:15px; padding:4px 6px; line-height:1; }
+.pw-toggle:hover { color:#f0f6fc; }
 
 .error { color:#f85149; font-size:13px; margin-bottom:10px; padding:8px 12px; background:rgba(248,81,73,0.08); border:1px solid rgba(248,81,73,0.2); border-radius:6px; }
 .success { color:#3fb950; font-size:13px; margin-bottom:10px; padding:8px 12px; background:rgba(63,185,80,0.08); border:1px solid rgba(63,185,80,0.2); border-radius:6px; }
@@ -152,6 +157,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <h1>HiFi API Admin</h1>
 <div style="display:flex;gap:8px;align-items:center">
 <button class="btn btn-primary" onclick="testAll()" id="testAllBtn">Test All</button>
+<button class="btn btn-danger" onclick="clearRateLimits()" id="clearLimitsBtn" title="Emergency: clear all rate-limit cooldowns">Clear Limits</button>
 <span class="badge" id="version">v2.10</span>
 </div>
 </div>
@@ -169,8 +175,8 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="form-group"><label>Client ID</label><input type="text" id="new-client-id" placeholder="client_id"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>Client Secret</label><input type="password" id="new-client-secret" placeholder="client_secret"></div>
-<div class="form-group"><label>Refresh Token</label><input type="password" id="new-refresh-token" placeholder="refresh_token"></div>
+<div class="form-group"><label>Client Secret</label><div class="pw-wrap"><input type="password" id="new-client-secret" placeholder="client_secret"><button type="button" class="pw-toggle" onclick="togglePw('new-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label>Refresh Token</label><div class="pw-wrap"><input type="password" id="new-refresh-token" placeholder="refresh_token"><button type="button" class="pw-toggle" onclick="togglePw('new-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
 </div>
 <button class="btn btn-primary" onclick="addAccount()">Add Account</button>
 <button class="btn" onclick="startOAuth()" id="oauthBtn" style="margin-left:8px">Add via OAuth</button>
@@ -220,6 +226,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:16px;word-break:break-all;font-size:13px;font-family:monospace;color:#58a6ff;margin-bottom:16px" id="oauthUrl">—</div>
 <button class="btn" onclick="copyOAuthUrl()" id="copyOAuthBtn" style="margin-right:8px">Copy URL</button>
 <button class="btn" onclick="openOAuthUrl()" id="openOAuthBtn">Open</button>
+<div class="form-group" style="margin-top:16px"><label>Label (optional — applied when authorization completes)</label><input type="text" id="oauth-modal-label" placeholder="My Tidal" oninput="updateOAuthLabel()"></div>
 <p style="margin-top:16px;color:#8b949e;font-size:13px" id="oauthStatus">Waiting for authorization...</p>
 <div class="modal-actions">
 <button class="btn" onclick="closeOAuth()">Cancel</button>
@@ -233,8 +240,8 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="form-group"><label>Label</label><input type="text" id="ed-label"></div>
 <div class="form-group"><label>User ID</label><input type="text" id="ed-user-id"></div>
 <div class="form-group"><label>Client ID</label><input type="text" id="ed-client-id"></div>
-<div class="form-group"><label>Client Secret</label><input type="password" id="ed-client-secret"></div>
-<div class="form-group"><label>Refresh Token</label><input type="password" id="ed-refresh-token"></div>
+<div class="form-group"><label>Client Secret</label><div class="pw-wrap"><input type="password" id="ed-client-secret"><button type="button" class="pw-toggle" onclick="togglePw('ed-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label>Refresh Token</label><div class="pw-wrap"><input type="password" id="ed-refresh-token"><button type="button" class="pw-toggle" onclick="togglePw('ed-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
 <div class="modal-actions">
 <button class="btn btn-primary" onclick="saveEdit()">Save</button>
 <button class="btn" onclick="closeEdit()">Cancel</button>
@@ -305,6 +312,28 @@ async function testAll() {
         document.getElementById('error').textContent = 'Test error: ' + e.message;
     } finally {
         btn.textContent = 'Test All';
+        btn.disabled = false;
+    }
+}
+
+async function clearRateLimits() {
+    if (!confirm('Emergency reset: clear ALL rate-limit cooldowns? Accounts may get banned again immediately.')) return;
+    var btn = document.getElementById('clearLimitsBtn');
+    btn.textContent = 'Clearing...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/accounts/clear-rate-limits', { method: 'POST', headers: headers() });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Rate limits cleared!';
+            fetchData();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = 'Clear Limits';
         btn.disabled = false;
     }
 }
@@ -529,7 +558,7 @@ async function fetchData() {
 
                 html += '<div class="account-card">' +
                     '<div class="card-header">' +
-                        '<div class="left"><span class="' + statusClass + '"></span><span class="label">' + esc(label) + '</span><span class="status-label ' + (a.is_active ? 'status-ok' : 'status-err') + '">' + statusText + '</span></div>' +
+                        '<div class="left"><span class="acc-num">' + (i + 1) + '</span><span class="' + statusClass + '"></span><span class="label">' + esc(label) + '</span><span class="status-label ' + (a.is_active ? 'status-ok' : 'status-err') + '">' + statusText + '</span></div>' +
                         '<div class="card-actions">' +
                             '<button class="btn" onclick="refreshAccount(\'' + a.id + '\')">Refresh Token</button>' +
                             '<button class="btn" onclick="openEdit(\'' + a.id + '\')">Edit</button>' +
@@ -567,13 +596,21 @@ function esc(s) {
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function togglePw(id, btn) {
+    var input = document.getElementById(id);
+    if (!input) return;
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    if (btn) btn.innerHTML = show ? '&#128064;' : '&#128065;';
+}
+
 async function refreshAccount(id) {
     try {
         var res = await fetch('/admin/accounts/' + id + '/refresh', {
             method: 'POST', headers: headers()
         });
         var data = await res.json();
-        if (res.ok) {
+        if (res.ok && data.status !== 'error') {
             document.getElementById('success').textContent = 'Token refreshed, account reactivated!';
             fetchData();
         } else {
@@ -659,11 +696,15 @@ async function addAccount() {
 var oauthSessionId = null;
 var oauthPollInterval = null;
 
+var oauthLabelTimer = null;
+
 function startOAuth() {
+    document.getElementById('oauth-modal-label').value = document.getElementById('new-label').value || '';
     document.getElementById('oauthUrl').textContent = 'Starting...';
     document.getElementById('oauthStatus').textContent = 'Contacting Tidal...';
     document.getElementById('oauthOverlay').classList.add('open');
-    fetch('/admin/setup', { method: 'POST', headers: headers() })
+    var lbl = (document.getElementById('new-label').value || '').trim();
+    fetch('/admin/setup', { method: 'POST', headers: headers(), body: JSON.stringify({ label: lbl || null }) })
         .then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
@@ -678,6 +719,17 @@ function startOAuth() {
         .catch(function(e) {
             document.getElementById('oauthStatus').textContent = 'Error: ' + e.message;
         });
+}
+
+function updateOAuthLabel() {
+    if (!oauthSessionId) return;
+    if (oauthLabelTimer) clearTimeout(oauthLabelTimer);
+    oauthLabelTimer = setTimeout(function() {
+        var lbl = (document.getElementById('oauth-modal-label').value || '').trim();
+        fetch('/admin/setup/' + oauthSessionId, {
+            method: 'PATCH', headers: headers(), body: JSON.stringify({ label: lbl || null })
+        }).catch(function() {});
+    }, 500);
 }
 
 function pollOAuth() {
