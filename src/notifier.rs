@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 /// Discord-only ban/outage alerts. Empty webhook URL = disabled.
@@ -37,7 +37,20 @@ impl Notifier {
         !self.webhook_url.is_empty()
     }
 
-    async fn send_throttled(&self, kind: &str, content: String) {
+    fn embed(title: &str, description: &str, color: u32, fields: Vec<Value>) -> Value {
+        json!({
+            "embeds": [{
+                "title": title,
+                "description": description,
+                "color": color,
+                "fields": fields,
+                "footer": { "text": "HiFi API" },
+                "timestamp": Utc::now().to_rfc3339(),
+            }]
+        })
+    }
+
+    async fn send_throttled(&self, kind: &str, payload: Value) {
         if self.webhook_url.is_empty() {
             return;
         }
@@ -55,7 +68,7 @@ impl Notifier {
         if let Err(e) = self
             .client
             .post(&self.webhook_url)
-            .json(&json!({ "content": content }))
+            .json(&payload)
             .send()
             .await
         {
@@ -65,38 +78,41 @@ impl Notifier {
 
     /// Fired when Tidal 403s an account (suspension risk).
     pub async fn alert_403(&self, label: &str, healthy: usize, total: usize) {
-        self.send_throttled(
-            "403",
-            format!(
-                "🚨 **HiFi API: account 403**\n`{}` was forbidden by Tidal (possible suspension).\nHealthy accounts: {}/{}",
-                label, healthy, total
-            ),
-        )
-        .await;
+        let payload = Self::embed(
+            "🚨 Account 403 — suspension risk",
+            "Tidal forbade this account. It has been parked; check whether it needs fresh credentials.",
+            0xF85149,
+            vec![
+                json!({"name": "Account", "value": label, "inline": true}),
+                json!({"name": "Healthy", "value": format!("{}/{}", healthy, total), "inline": true}),
+            ],
+        );
+        self.send_throttled("403", payload).await;
     }
 
     /// Fired when no usable account remains.
     pub async fn alert_all_down(&self, total: usize) {
-        self.send_throttled(
-            "down",
-            format!(
-                "🛑 **HiFi API: all accounts down**\nNo active, non-rate-limited account available ({} total). Playback is returning 503.",
-                total
-            ),
-        )
-        .await;
+        let payload = Self::embed(
+            "🛑 All accounts down",
+            "No active, non-rate-limited account available. Playback is returning 503.",
+            0xF85149,
+            vec![json!({"name": "Total accounts", "value": total.to_string(), "inline": true})],
+        );
+        self.send_throttled("down", payload).await;
     }
 
     /// Fired when auto-heal recovers an account.
     pub async fn alert_healed(&self, label: &str, healthy: usize, total: usize) {
-        self.send_throttled(
-            "healed",
-            format!(
-                "✅ **HiFi API: account recovered**\n`{}` is back in rotation.\nHealthy accounts: {}/{}",
-                label, healthy, total
-            ),
-        )
-        .await;
+        let payload = Self::embed(
+            "✅ Account recovered",
+            "Auto-heal refreshed credentials and returned the account to rotation.",
+            0x3FB950,
+            vec![
+                json!({"name": "Account", "value": label, "inline": true}),
+                json!({"name": "Healthy", "value": format!("{}/{}", healthy, total), "inline": true}),
+            ],
+        );
+        self.send_throttled("healed", payload).await;
     }
 
     /// Manual test from the admin panel (bypasses throttle).
@@ -104,9 +120,15 @@ impl Notifier {
         if self.webhook_url.is_empty() {
             return Err("DISCORD_WEBHOOK_URL is not set".into());
         }
+        let payload = Self::embed(
+            "✅ Discord alerts working",
+            "Test alert from the HiFi API admin panel. Ban and outage alerts will arrive as embeds like this one.",
+            0x3FB950,
+            vec![],
+        );
         self.client
             .post(&self.webhook_url)
-            .json(&json!({ "content": "✅ **HiFi API:** Discord alerts are working." }))
+            .json(&payload)
             .send()
             .await
             .map_err(|e| format!("Failed to send Discord alert: {}", e))?;
