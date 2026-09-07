@@ -1,5 +1,6 @@
 mod account_manager;
 mod admin;
+mod api_keys;
 mod anti_ban;
 mod config;
 mod db;
@@ -21,7 +22,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::Method;
 use axum::middleware;
-use axum::routing::{any, get, patch, post, put};
+use axum::routing::{any, delete, get, patch, post, put};
 use axum::{Json, Router};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
@@ -29,6 +30,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::account_manager::{AccountManager, SwitchingWeights};
+use crate::api_keys::ApiKeyManager;
 use crate::config::Config;
 use crate::token_manager::TokenManager;
 
@@ -37,6 +39,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub account_manager: Arc<AccountManager>,
     pub token_manager: Arc<TokenManager>,
+    pub api_keys: Arc<ApiKeyManager>,
     pub tidal_client: Arc<tidal_client::TidalClient>,
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
@@ -138,6 +141,11 @@ async fn main() {
     let token_manager = Arc::new(TokenManager::new(db.clone()));
     token_manager.set_account_manager(account_manager.clone());
 
+    let api_keys = Arc::new(ApiKeyManager::new(db.clone()));
+    if let Err(e) = api_keys.load_from_db().await {
+        tracing::warn!("Could not load API keys from DB: {}", e);
+    }
+
     let rate_limits = Arc::new(rate_limit::RateLimitSettings::from_env());
     if let Some(db) = &db {
         rate_limits.load_from_db(db).await;
@@ -174,6 +182,7 @@ async fn main() {
         config: config.clone(),
         account_manager: account_manager.clone(),
         token_manager: token_manager.clone(),
+        api_keys: api_keys.clone(),
         tidal_client: tidal_client.clone(),
         proxy_manager: proxy_manager.clone(),
         anti_ban,
@@ -222,10 +231,14 @@ async fn main() {
         .route("/admin", get(crate::admin::ui::admin_index))
         // Admin API routes (auth-protected)
         .nest("/admin", admin_api(state.clone()))
-        // Innermost: response cache (inside the IP limiter, so limits apply uniformly).
+        // Innermost: response cache (inside the limiters, so limits apply uniformly).
         .layer(middleware::from_fn_with_state(
             state.clone(),
             cache::cache_responses,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_keys::ApiKeyManager::enforce_api_key,
         ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -268,6 +281,9 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/alerts/test", post(crate::admin::alerts::alert_test))
         .route("/cache", get(crate::admin::cache::cache_stats))
         .route("/cache/clear", post(crate::admin::cache::cache_clear))
+        .route("/keys", get(crate::admin::api_keys::list_keys).post(crate::admin::api_keys::create_key))
+        .route("/keys/{id}", delete(crate::admin::api_keys::remove_key))
+        .route("/keys/{id}/toggle", put(crate::admin::api_keys::toggle_key))
         .route("/requests", get(crate::admin::requests::get_requests))
         .route(
             "/settings",

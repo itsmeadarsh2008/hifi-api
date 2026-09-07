@@ -232,6 +232,18 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 
 <div class="form-section">
+<h3>API Keys</h3>
+<p style="font-size:11px;color:#8b949e;margin-bottom:12px">While no key exists the API stays open. Creating the first key locks all public routes behind <span style="font-family:monospace">X-API-Key</span> (or owner <span style="font-family:monospace">X-Admin-Key</span>). Quota 0 = unlimited.</p>
+<div class="form-row">
+<div class="form-group"><label>Label</label><input type="text" id="new-key-label" placeholder="My app"></div>
+<div class="form-group"><label>Quota (requests, 0 = unlimited)</label><input type="number" id="new-key-quota" min="0" placeholder="0"></div>
+</div>
+<button class="btn btn-primary" onclick="addApiKey()">Create Key</button>
+<div id="keyResult" style="font-size:12px;margin-top:10px;color:#3fb950;word-break:break-all"></div>
+<div id="keys-container" style="margin-top:12px"></div>
+</div>
+
+<div class="form-section">
 <h3>Request Log</h3>
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Total <strong id="rq-total">—</strong></span>
@@ -851,6 +863,68 @@ loadRequestLog();
 setInterval(loadRequestLog, 15000);
 loadCacheStats();
 setInterval(loadCacheStats, 15000);
+loadApiKeys();
+setInterval(loadApiKeys, 15000);
+
+async function loadApiKeys() {
+    try {
+        var res = await fetch('/admin/keys', { headers: headers() });
+        if (!res.ok) return;
+        var keys = (await res.json()).api_keys || [];
+        var html = '';
+        for (var k of keys) {
+            var quota = (k.quota && k.quota > 0) ? (k.used + '/' + k.quota) : (k.used + '/∞');
+            html += '<div class="cred-row"><span class="cred-key">' + esc(k.label || k.key_prefix) + '</span>' +
+                '<span class="cred-value">' + esc(k.key_prefix) + '… · used ' + quota + ' · ' + (k.is_active ? 'ON' : 'OFF') + '</span>' +
+                '<span style="margin-left:auto;display:flex;gap:6px">' +
+                '<button class="btn" onclick="toggleApiKey(\'' + k.id + '\',' + (!k.is_active) + ')">' + (k.is_active ? 'OFF' : 'ON') + '</button>' +
+                '<button class="btn btn-danger" onclick="removeApiKey(\'' + k.id + '\')">Delete</button>' +
+                '</span></div>';
+        }
+        document.getElementById('keys-container').innerHTML = html || '<span style="font-size:12px;color:#8b949e">No keys — API is open</span>';
+    } catch(e) {}
+}
+
+async function addApiKey() {
+    try {
+        var res = await fetch('/admin/keys', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({ label: document.getElementById('new-key-label').value, quota: parseInt(document.getElementById('new-key-quota').value) || 0 })
+        });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('keyResult').textContent = 'New key (copy now, shown once): ' + data.api_key;
+            document.getElementById('new-key-label').value = '';
+            document.getElementById('new-key-quota').value = '';
+            loadApiKeys();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function toggleApiKey(id, active) {
+    try {
+        var res = await fetch('/admin/keys/' + id + '/toggle', {
+            method: 'PUT', headers: headers(), body: JSON.stringify({ active: active })
+        });
+        if (res.ok) loadApiKeys();
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function removeApiKey(id) {
+    if (!confirm('Delete this API key? Clients using it will get 401.')) return;
+    try {
+        var res = await fetch('/admin/keys/' + id, { method: 'DELETE', headers: headers() });
+        if (res.ok) loadApiKeys();
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
 
 async function clearCache() {
     var btn = document.getElementById('clearCacheBtn');
