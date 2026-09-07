@@ -138,9 +138,10 @@ pub async fn refresh_account_token(
         .await
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", id)))?;
 
+    let hc = state.tidal_client.working_client().await?;
     match state
         .token_manager
-        .refresh_token(&account, state.tidal_client.http_client())
+        .refresh_token(&account, &hc)
         .await
     {
         Ok(_) => {
@@ -181,7 +182,7 @@ pub async fn test_all_accounts(
 
     let accounts = state.account_manager.list_accounts().await;
     let country = &state.config.country_code;
-    let client = state.tidal_client.http_client().clone();
+    let client = state.tidal_client.working_client().await?;
     let token_manager = state.token_manager.clone();
 
     let mut handles = Vec::new();
@@ -368,16 +369,15 @@ pub async fn test_account(
     let is_active = account.is_active.load(std::sync::atomic::Ordering::Relaxed);
     let start = Instant::now();
 
+    let hc = state.tidal_client.working_client().await?;
     match state
         .token_manager
-        .get_token(&account, state.tidal_client.http_client())
+        .get_token(&account, &hc)
         .await
     {
         Ok(token) => {
             let token_ms = start.elapsed().as_millis() as u64;
-            let resp = state
-                .tidal_client
-                .http_client()
+            let resp = hc
                 .get("https://api.tidal.com/v1/tracks/1/")
                 .header("authorization", format!("Bearer {}", token))
                 .send()

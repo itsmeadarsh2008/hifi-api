@@ -187,12 +187,15 @@ impl TokenManager {
     pub async fn start_prewarm_loop(
         self: Arc<Self>,
         manager: Arc<AccountManager>,
-        http_client: Arc<Client>,
+        proxy_manager: Arc<crate::proxy_manager::ProxyManager>,
     ) {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(300)).await;
-                self.prewarm_all(&manager, &http_client).await;
+                match proxy_manager.working_client().await {
+                    Ok(client) => self.prewarm_all(&manager, &client).await,
+                    Err(e) => tracing::warn!("Token pre-warm skipped: {}", e),
+                }
             }
         });
     }

@@ -211,6 +211,17 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <button class="btn btn-primary" onclick="saveRateLimits()">Save Rate Limits</button>
 </div>
 
+<div class="form-section">
+<h3>Proxies</h3>
+<div class="card-stats" style="margin-bottom:12px">
+<span class="card-stat">Status <strong id="px-status">—</strong></span>
+<span class="card-stat">Current <strong id="px-current">—</strong></span>
+<span class="card-stat">Pool <strong id="px-pool">—</strong></span>
+<span class="card-stat">Fails <strong id="px-fails">—</strong></span>
+</div>
+<p style="font-size:11px;color:#8b949e;margin-bottom:0">Optional. Set <span style="font-family:monospace">USE_PROXIES=true</span> + <span style="font-family:monospace">PROXIES_FILE</span> and restart to route Tidal traffic through rotating proxies. Without it, everything goes direct.</p>
+</div>
+
 <div class="test-results-section" id="testResultsSection" style="display:none">
 <div class="test-results-header">
 <h3>Test Results</h3>
@@ -778,6 +789,20 @@ function openOAuthUrl() {
 fetchData();
 setInterval(fetchData, 15000);
 loadRateLimits();
+loadProxyStatus();
+setInterval(loadProxyStatus, 15000);
+
+async function loadProxyStatus() {
+    try {
+        var res = await fetch('/admin/proxies', { headers: headers() });
+        if (!res.ok) return;
+        var p = (await res.json()).proxies || {};
+        document.getElementById('px-status').textContent = !p.enabled ? 'Disabled (direct)' : (p.ready ? 'Active' : 'No working proxy');
+        document.getElementById('px-current').textContent = p.current || (p.enabled ? '—' : 'direct');
+        document.getElementById('px-pool').textContent = p.pool_size != null ? p.pool_size : '—';
+        document.getElementById('px-fails').textContent = p.consecutive_fails != null ? p.consecutive_fails : '—';
+    } catch(e) {}
+}
 
 async function loadRateLimits() {
     try {

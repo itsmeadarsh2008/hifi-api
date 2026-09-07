@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod proxies;
 pub mod setup;
 pub mod settings;
 pub mod stats;

@@ -10,11 +10,12 @@ use crate::account_manager::{AccountManager, AccountState};
 use crate::anti_ban::AntiBan;
 use crate::config::Config;
 use crate::error::AppError;
+use crate::proxy_manager::ProxyManager;
 use crate::rate_limit::RateLimitSettings;
 use crate::token_manager::TokenManager;
 
 pub struct TidalClient {
-    http_client: Client,
+    proxy_manager: Arc<ProxyManager>,
     token_manager: Arc<TokenManager>,
     account_manager: Arc<AccountManager>,
     anti_ban: Arc<AntiBan>,
@@ -25,7 +26,7 @@ pub struct TidalClient {
 impl TidalClient {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        http_client: Client,
+        proxy_manager: Arc<ProxyManager>,
         token_manager: Arc<TokenManager>,
         account_manager: Arc<AccountManager>,
         anti_ban: Arc<AntiBan>,
@@ -33,7 +34,7 @@ impl TidalClient {
         config: Arc<Config>,
     ) -> Self {
         Self {
-            http_client,
+            proxy_manager,
             token_manager,
             account_manager,
             anti_ban,
@@ -42,8 +43,19 @@ impl TidalClient {
         }
     }
 
-    pub fn http_client(&self) -> &Client {
-        &self.http_client
+    /// Current HTTP client (whatever the proxy swap holds right now).
+    pub fn http_client(&self) -> Client {
+        self.proxy_manager.client()
+    }
+
+    /// Client gated for Tidal traffic: resolves a working proxy first,
+    /// or errors (never silently leaks direct) unless fallback is enabled.
+    pub async fn working_client(&self) -> Result<Client, AppError> {
+        self.proxy_manager.working_client().await
+    }
+
+    pub fn proxy_manager(&self) -> &Arc<ProxyManager> {
+        &self.proxy_manager
     }
 
     pub fn config(&self) -> &Config {
@@ -78,6 +90,8 @@ impl TidalClient {
             1
         };
 
+        let http = self.working_client().await?;
+
         let mut failed_ids: Vec<String> = Vec::new();
         let account_count = self.account_manager.account_count().await;
         let max_account_attempts = std::cmp::max(1, account_count);
@@ -98,7 +112,7 @@ impl TidalClient {
 
                 let token = match self
                     .token_manager
-                    .get_token(&account, &self.http_client)
+                    .get_token(&account, &http)
                     .await
                 {
                     Ok(t) => t,
@@ -117,8 +131,7 @@ impl TidalClient {
                     tokio::time::sleep(Duration::from_millis(jitter)).await;
                 }
 
-                let mut req = self
-                    .http_client
+                let mut req = http
                     .get(url)
                     .header("authorization", format!("Bearer {}", token))
                     .header("User-Agent", "okhttp/5.3.2")
@@ -131,12 +144,23 @@ impl TidalClient {
                     req = req.query(&p);
                 }
 
-                let resp = req.send().await?;
+                let resp = match req.send().await {
+                    Ok(r) => {
+                        self.proxy_manager.note_success();
+                        r
+                    }
+                    Err(e) => {
+                        if e.is_connect() || e.is_timeout() {
+                            self.proxy_manager.note_failure();
+                        }
+                        return Err(e.into());
+                    }
+                };
                 let status = resp.status();
 
                 match status.as_u16() {
                     401 => {
-                        let _ = self.token_manager.refresh_token(&account, &self.http_client).await;
+                        let _ = self.token_manager.refresh_token(&account, &http).await;
                         if attempt >= max_retries - 1 {
                             self.account_manager
                                 .mark_account_error(&account.id, "Tidal 401 unauthorized")
@@ -147,15 +171,14 @@ impl TidalClient {
                     404 => {
                         let fresh_token = self
                             .token_manager
-                            .refresh_token(&account, &self.http_client)
+                            .refresh_token(&account, &http)
                             .await?;
 
                         let stored = account.access_token.read().await;
                         if let Some(ref stored_token) = *stored {
                             if stored_token != &fresh_token {
                                 drop(stored);
-                                let mut req2 = self
-                                    .http_client
+                                let mut req2 = http
                                     .get(url)
                                     .header("authorization", format!("Bearer {}", fresh_token))
                                     .header("User-Agent", "okhttp/5.3.2")
@@ -166,7 +189,18 @@ impl TidalClient {
                                 if let Some(ref p) = params {
                                     req2 = req2.query(&p);
                                 }
-                                let resp2 = req2.send().await?;
+                                let resp2 = match req2.send().await {
+                                    Ok(r) => {
+                                        self.proxy_manager.note_success();
+                                        r
+                                    }
+                                    Err(e) => {
+                                        if e.is_connect() || e.is_timeout() {
+                                            self.proxy_manager.note_failure();
+                                        }
+                                        return Err(e.into());
+                                    }
+                                };
                                 let status2 = resp2.status();
                                 if status2.is_success() {
                                     let body2 = resp2.text().await?;
@@ -280,8 +314,8 @@ impl TidalClient {
         params: Option<Vec<(&str, &str)>>,
         token: &str,
     ) -> Result<Value, AppError> {
-        let mut req = self
-            .http_client
+        let http = self.working_client().await?;
+        let mut req = http
             .get(url)
             .header("authorization", format!("Bearer {}", token))
             .header("User-Agent", "okhttp/5.3.2")

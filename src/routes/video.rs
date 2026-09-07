@@ -26,9 +26,10 @@ pub async fn get_video(
     Query(params): Query<VideoParams>,
 ) -> Result<Json<Value>, AppError> {
     let account = state.account_manager.select_account().await?;
+    let hc = state.tidal_client.working_client().await?;
     let token = state
         .token_manager
-        .get_token(&account, state.tidal_client.http_client())
+        .get_token(&account, &hc)
         .await?;
 
     let url = format!("https://api.tidal.com/v1/videos/{}/playbackinfo", params.id);

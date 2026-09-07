@@ -27,9 +27,10 @@ pub async fn get_artist(
     }
 
     let account = state.account_manager.select_account().await?;
+    let hc = state.tidal_client.working_client().await?;
     let token = state
         .token_manager
-        .get_token(&account, state.tidal_client.http_client())
+        .get_token(&account, &hc)
         .await?;
 
     if let Some(id) = params.id {
@@ -152,7 +153,7 @@ pub async fn get_artist(
 
     for aid in &album_ids {
         let sem = sem.clone();
-        let client = state.tidal_client.http_client().clone();
+        let client = state.tidal_client.working_client().await?;
         let token = token.clone();
         let cc = state.config.country_code.clone();
         let aid = aid.clone();

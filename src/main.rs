@@ -20,7 +20,6 @@ use axum::http::Method;
 use axum::middleware;
 use axum::routing::{any, get, patch, post, put};
 use axum::{Json, Router};
-use reqwest::Client;
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -73,16 +72,12 @@ async fn main() {
         }
     };
 
-    let http_client = Client::builder()
-        .gzip(true)
-        .http2_prior_knowledge()
-        .http2_adaptive_window(true)
-        .pool_max_idle_per_host(500)
-        .pool_idle_timeout(std::time::Duration::from_secs(30))
-        .user_agent("okhttp/5.3.2")
-        .build()
-        .expect("Failed to build HTTP client");
-    let http_client = Arc::new(http_client);
+    // ProxyManager owns the shared HTTP client (direct by default; proxied
+    // when USE_PROXIES=true). The initial proxy resolve runs in the background
+    // so startup is never blocked on proxy tests.
+    let proxy_manager = Arc::new(proxy_manager::ProxyManager::new(config.clone()));
+    proxy_manager.spawn_initial_resolve();
+    let http_client = Arc::new(proxy_manager.client());
 
     let switching_weights = SwitchingWeights::default();
     let account_manager = Arc::new(AccountManager::new(db.clone(), switching_weights));
@@ -158,7 +153,7 @@ async fn main() {
     }
 
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
-        (*http_client).clone(),
+        proxy_manager.clone(),
         token_manager.clone(),
         account_manager.clone(),
         anti_ban.clone(),
@@ -166,14 +161,12 @@ async fn main() {
         config.clone(),
     ));
 
-    let proxy_manager = Arc::new(proxy_manager::ProxyManager::new(config.clone()));
-
     let state = AppState {
         config: config.clone(),
         account_manager: account_manager.clone(),
         token_manager: token_manager.clone(),
         tidal_client: tidal_client.clone(),
-        proxy_manager,
+        proxy_manager: proxy_manager.clone(),
         anti_ban,
         rate_limits,
         db,
@@ -181,7 +174,9 @@ async fn main() {
     };
 
     // Start token pre-warming background task
-    token_manager.start_prewarm_loop(account_manager, http_client).await;
+    token_manager
+        .start_prewarm_loop(account_manager, proxy_manager.clone())
+        .await;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -247,6 +242,7 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts/{id}/test", post(crate::admin::accounts::test_account))
         .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
+        .route("/proxies", get(crate::admin::proxies::proxy_status))
         .route(
             "/settings",
             get(crate::admin::settings::get_settings).put(crate::admin::settings::update_settings),
