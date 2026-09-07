@@ -18,6 +18,7 @@ pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
             refresh_token TEXT NOT NULL,
             user_id TEXT,
             is_active INTEGER NOT NULL DEFAULT 1,
+            auto_disabled INTEGER NOT NULL DEFAULT 0,
             notes TEXT NOT NULL DEFAULT '',
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
@@ -25,6 +26,18 @@ pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+
+    // Migrate pre-existing databases that lack the column.
+    let cols: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as("PRAGMA table_info(accounts)")
+            .fetch_all(&pool)
+            .await?;
+    if !cols.iter().any(|c| c.1 == "auto_disabled") {
+        sqlx::query("ALTER TABLE accounts ADD COLUMN auto_disabled INTEGER NOT NULL DEFAULT 0")
+            .execute(&pool)
+            .await?;
+        tracing::info!("Migrated accounts table: added auto_disabled");
+    }
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS tokens (

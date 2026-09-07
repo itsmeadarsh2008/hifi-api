@@ -87,6 +87,18 @@ impl Notifier {
         .await;
     }
 
+    /// Fired when auto-heal recovers an account.
+    pub async fn alert_healed(&self, label: &str, healthy: usize, total: usize) {
+        self.send_throttled(
+            "healed",
+            format!(
+                "✅ **HiFi API: account recovered**\n`{}` is back in rotation.\nHealthy accounts: {}/{}",
+                label, healthy, total
+            ),
+        )
+        .await;
+    }
+
     /// Manual test from the admin panel (bypasses throttle).
     pub async fn send_test(&self) -> Result<(), String> {
         if self.webhook_url.is_empty() {

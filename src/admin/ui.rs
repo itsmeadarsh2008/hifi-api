@@ -208,6 +208,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="form-group"><label>403 Cooldown (sec)</label><input type="number" id="rl-403" min="0" placeholder="180"></div>
 </div>
 <p style="font-size:11px;color:#8b949e;margin-bottom:16px">Per-IP limits apply independently to each client IP (excess gets HTTP 429). Tidal limits throttle all upstream requests globally with jitter to avoid bans. Cooldowns park an account after a 429/403.</p>
+<div class="form-group" style="margin-bottom:16px"><label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#c9d1d9"><input type="checkbox" id="rl-autoheal" style="width:auto"> Auto-heal: retry system-disabled accounts (never touches manually-OFF accounts)</label></div>
 <button class="btn btn-primary" onclick="saveRateLimits()">Save Rate Limits</button>
 </div>
 
@@ -627,6 +628,7 @@ async function fetchData() {
                             '<span class="card-stat">Requests <strong>' + a.request_count + '</strong></span>' +
                             '<span class="card-stat">Errors <strong>' + a.error_count + '</strong></span>' +
                             '<span class="card-stat">Rate Limited <strong>' + rateStr + '</strong></span>' +
+                            (a.auto_disabled ? '<span class="card-stat">Auto-heal <strong>retrying</strong></span>' : '') +
                             '<span class="card-stat">Token <strong>' + tokenStr + '</strong></span>' +
                             '<span class="card-stat test-badge" id="test-' + a.id + '" onclick="showTestDetails(\'' + a.id + '\')">Test <strong>-</strong></span>' +
                         '</div>' +
@@ -1004,6 +1006,7 @@ async function loadRateLimits() {
         document.getElementById('rl-tidal-burst').value = r.tidal_burst || 24;
         document.getElementById('rl-429').value = r.cooldown_429_secs || 90;
         document.getElementById('rl-403').value = r.cooldown_403_secs || 180;
+        document.getElementById('rl-autoheal').checked = r.auto_heal !== false;
     } catch(e) {}
 }
 
@@ -1046,7 +1049,8 @@ async function saveRateLimits() {
             tidal_rps: parseInt(document.getElementById('rl-tidal-rps').value) || 12,
             tidal_burst: parseInt(document.getElementById('rl-tidal-burst').value) || 24,
             cooldown_429_secs: parseInt(document.getElementById('rl-429').value) || 90,
-            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 180
+            cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 180,
+            auto_heal: document.getElementById('rl-autoheal').checked
         }
     };
     try {

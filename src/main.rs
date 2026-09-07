@@ -1,6 +1,7 @@
 mod account_manager;
 mod admin;
 mod api_keys;
+mod autoheal;
 mod anti_ban;
 mod config;
 mod db;
@@ -183,12 +184,12 @@ async fn main() {
         account_manager: account_manager.clone(),
         token_manager: token_manager.clone(),
         api_keys: api_keys.clone(),
+        notifier: notifier.clone(),
         tidal_client: tidal_client.clone(),
         proxy_manager: proxy_manager.clone(),
         anti_ban,
-        notifier,
         cache: Arc::new(cache::ResponseCache::new()),
-        rate_limits,
+        rate_limits: rate_limits.clone(),
         request_log: Arc::new(request_log::RequestLog::new()),
         db,
         setup_sessions: admin::setup::new_session_store(),
@@ -196,8 +197,19 @@ async fn main() {
 
     // Start token pre-warming background task
     token_manager
-        .start_prewarm_loop(account_manager, proxy_manager.clone())
+        .clone()
+        .start_prewarm_loop(account_manager.clone(), proxy_manager.clone())
         .await;
+
+    // Start auto-heal background task (recovers system-disabled accounts)
+    autoheal::start_autoheal_loop(
+        account_manager.clone(),
+        token_manager.clone(),
+        proxy_manager.clone(),
+        rate_limits.clone(),
+        notifier.clone(),
+    )
+    .await;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

@@ -98,6 +98,7 @@ impl TokenManager {
             account.is_active.store(false, std::sync::atomic::Ordering::Relaxed);
             if let Some(am) = self.account_manager.get() {
                 let _ = am.set_account_active(&account.id, false).await;
+                let _ = am.set_auto_disabled(&account.id, true).await;
             }
             return Err(AppError::Unauthorized(format!("Tidal Auth Error: {}", err_msg)));
         }

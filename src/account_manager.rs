@@ -37,6 +37,11 @@ pub struct AccountState {
     pub access_token: RwLock<Option<String>>,
     pub token_expires_at: AtomicI64,
     pub is_active: AtomicBool,
+    /// True when the system (not the owner) deactivated the account.
+    /// Only these are eligible for auto-heal; manual OFF is never touched.
+    pub auto_disabled: AtomicBool,
+    pub heal_failures: AtomicU64,
+    pub heal_next_retry: AtomicI64,
     pub notes: RwLock<String>,
     pub last_used: AtomicI64,
     pub request_count: AtomicU64,
@@ -67,6 +72,9 @@ impl AccountState {
             access_token: RwLock::new(None),
             token_expires_at: AtomicI64::new(0),
             is_active: AtomicBool::new(is_active),
+            auto_disabled: AtomicBool::new(false),
+            heal_failures: AtomicU64::new(0),
+            heal_next_retry: AtomicI64::new(0),
             notes: RwLock::new(notes),
             last_used: AtomicI64::new(0),
             request_count: AtomicU64::new(0),
@@ -86,6 +94,7 @@ pub struct DbAccountRow {
     pub refresh_token: String,
     pub user_id: Option<String>,
     pub is_active: i32,
+    pub auto_disabled: Option<i32>,
     pub notes: String,
     pub access_token: Option<String>,
     pub expires_at: Option<i64>,
@@ -126,7 +135,7 @@ impl AccountManager {
 
         let rows: Vec<DbAccountRow> = sqlx::query_as::<_, DbAccountRow>(
             "SELECT a.id, a.label, a.client_id, a.client_secret, a.refresh_token,
-             a.user_id, a.is_active, a.notes,
+             a.user_id, a.is_active, a.auto_disabled, a.notes,
              t.access_token, t.expires_at
              FROM accounts a
              LEFT JOIN tokens t ON t.account_id = a.id
@@ -162,6 +171,9 @@ impl AccountManager {
                 row.is_active != 0,
                 row.notes,
             ));
+            if row.auto_disabled.unwrap_or(0) != 0 {
+                state.auto_disabled.store(true, Ordering::Relaxed);
+            }
             if let (Some(token), Some(expires)) = (row.access_token, row.expires_at) {
                 if !token.is_empty() && expires > 0 {
                     *state.access_token.write().await = Some(token);
@@ -386,6 +398,31 @@ impl AccountManager {
 
         accounts[idx] = updated;
         Ok(())
+    }
+
+    /// Mark an account as system-disabled (eligible for auto-heal) or clear it
+    /// (owner intent / successful recovery — never auto-healed while clear).
+    pub async fn set_auto_disabled(&self, id: &str, disabled: bool) -> Result<(), AppError> {
+        if let Some(account) = self.get_account_by_id(id).await {
+            account.auto_disabled.store(disabled, Ordering::Relaxed);
+            if disabled {
+                account.heal_failures.store(0, Ordering::Relaxed);
+                account.heal_next_retry.store(0, Ordering::Relaxed);
+            }
+            if let Some(db) = &self.db {
+                sqlx::query(
+                    "UPDATE accounts SET auto_disabled = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(disabled as i32)
+                .bind(Utc::now().timestamp())
+                .bind(id)
+                .execute(db)
+                .await?;
+            }
+            Ok(())
+        } else {
+            Err(AppError::NotFound(format!("Account {} not found", id)))
+        }
     }
 
     pub async fn set_account_active(&self, id: &str, active: bool) -> Result<(), AppError> {
