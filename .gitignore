@@ -66,6 +66,8 @@ db.sqlite3
 db.sqlite3-journal
 hifi.db
 hifi.db-journal
+hifi.db-shm
+hifi.db-wal
 
 # Flask stuff:
 instance/
