@@ -7,6 +7,7 @@ mod error;
 mod ip_limiter;
 mod proxy_manager;
 mod rate_limit;
+mod request_log;
 mod routes;
 mod setup;
 mod tidal_client;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
     pub rate_limits: Arc<rate_limit::RateLimitSettings>,
+    pub request_log: Arc<request_log::RequestLog>,
     pub db: Option<sqlx::SqlitePool>,
     pub setup_sessions: admin::setup::Sessions,
 }
@@ -169,6 +171,7 @@ async fn main() {
         proxy_manager: proxy_manager.clone(),
         anti_ban,
         rate_limits,
+        request_log: Arc::new(request_log::RequestLog::new()),
         db,
         setup_sessions: admin::setup::new_session_store(),
     };
@@ -216,6 +219,10 @@ async fn main() {
         ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            request_log::log_requests,
+        ))
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -243,6 +250,7 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
         .route("/proxies", get(crate::admin::proxies::proxy_status))
+        .route("/requests", get(crate::admin::requests::get_requests))
         .route(
             "/settings",
             get(crate::admin::settings::get_settings).put(crate::admin::settings::update_settings),

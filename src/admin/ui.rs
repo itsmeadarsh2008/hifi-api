@@ -222,6 +222,18 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <p style="font-size:11px;color:#8b949e;margin-bottom:0">Optional. Set <span style="font-family:monospace">USE_PROXIES=true</span> + <span style="font-family:monospace">PROXIES_FILE</span> and restart to route Tidal traffic through rotating proxies. Without it, everything goes direct.</p>
 </div>
 
+<div class="form-section">
+<h3>Request Log</h3>
+<div class="card-stats" style="margin-bottom:12px">
+<span class="card-stat">Total <strong id="rq-total">—</strong></span>
+<span class="card-stat">Errors <strong id="rq-errors">—</strong></span>
+<span class="card-stat">p50 <strong id="rq-p50">—</strong></span>
+<span class="card-stat">p95 <strong id="rq-p95">—</strong></span>
+</div>
+<div class="card-stats" style="margin-bottom:12px" id="rq-endpoints"></div>
+<div id="rq-recent" style="font-family:monospace;font-size:11px;line-height:1.7;max-height:220px;overflow-y:auto"></div>
+</div>
+
 <div class="test-results-section" id="testResultsSection" style="display:none">
 <div class="test-results-header">
 <h3>Test Results</h3>
@@ -791,6 +803,31 @@ setInterval(fetchData, 15000);
 loadRateLimits();
 loadProxyStatus();
 setInterval(loadProxyStatus, 15000);
+loadRequestLog();
+setInterval(loadRequestLog, 15000);
+
+async function loadRequestLog() {
+    try {
+        var res = await fetch('/admin/requests?limit=20', { headers: headers() });
+        if (!res.ok) return;
+        var r = (await res.json()).requests || {};
+        document.getElementById('rq-total').textContent = r.total != null ? r.total : '—';
+        document.getElementById('rq-errors').textContent = r.errors != null ? r.errors : '—';
+        document.getElementById('rq-p50').textContent = r.p50_ms != null ? r.p50_ms + 'ms' : '—';
+        document.getElementById('rq-p95').textContent = r.p95_ms != null ? r.p95_ms + 'ms' : '—';
+        var ep = '';
+        for (var e of (r.by_endpoint || []).slice(0, 8)) {
+            ep += '<span class="card-stat">' + esc(e.endpoint) + ' <strong>' + e.hits + '</strong></span>';
+        }
+        document.getElementById('rq-endpoints').innerHTML = ep || '<span class="card-stat">no traffic yet</span>';
+        var rows = '';
+        for (var q of (r.recent || [])) {
+            var cls = q.status >= 500 ? 'test-fail' : (q.status >= 400 ? 'test-pending' : 'test-pass');
+            rows += '<div><span class="' + cls + '">' + q.status + '</span> ' + q.method + ' ' + esc(q.path) + ' <span style="color:#8b949e">' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
+        }
+        document.getElementById('rq-recent').innerHTML = rows || '<span style="color:#8b949e">no traffic yet</span>';
+    } catch(e) {}
+}
 
 async function loadProxyStatus() {
     try {

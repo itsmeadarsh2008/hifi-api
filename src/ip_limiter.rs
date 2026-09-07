@@ -40,7 +40,7 @@ pub async fn enforce_ip_rate_limit(
     }
 }
 
-fn client_ip(state: &AppState, req: &Request<Body>, fallback: SocketAddr) -> IpAddr {
+pub(crate) fn client_ip(state: &AppState, req: &Request<Body>, fallback: SocketAddr) -> IpAddr {
     if state.config.trust_proxy {
         if let Some(xff) = req
             .headers()
