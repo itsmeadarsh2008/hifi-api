@@ -8,10 +8,6 @@
 
 </div>
 
-![Running on BiniLossless.](https://sachinsenal0x64.github.io/picx-images-hosting/hifi.5fkz01pkwn.webp)
-
-<p align="center">Running on BiniLossless on <a href="https://tidal.qqdl.site/">qqdl.site</a>.</p>
-
 `hifi-api` is a Rust port of the original [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi) / [binimum/hifi-api](https://github.com/binimum/hifi-api) project — a Tidal Music Proxy with intelligent multi-account switching, secure admin panel, and anti-ban rate limiting.
 
 ## What's different from binimum/hifi-api?
