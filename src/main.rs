@@ -296,6 +296,8 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/keys", get(crate::admin::api_keys::list_keys).post(crate::admin::api_keys::create_key))
         .route("/keys/{id}", delete(crate::admin::api_keys::remove_key))
         .route("/keys/{id}/toggle", put(crate::admin::api_keys::toggle_key))
+        .route("/backup", get(crate::admin::backup::download_backup))
+        .route("/backup/restore", post(crate::admin::backup::restore_backup))
         .route("/requests", get(crate::admin::requests::get_requests))
         .route(
             "/settings",

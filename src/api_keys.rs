@@ -119,6 +119,12 @@ impl ApiKeyManager {
         Ok((state, raw))
     }
 
+    /// Drop all in-memory state and reload from the database (used after restore).
+    pub async fn reload_from_db(&self) -> Result<(), AppError> {
+        self.keys.write().await.clear();
+        self.load_from_db().await
+    }
+
     pub async fn list(&self) -> Vec<Arc<ApiKeyState>> {
         self.keys.read().await.clone()
     }

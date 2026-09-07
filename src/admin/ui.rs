@@ -245,6 +245,17 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 
 <div class="form-section">
+<h3>Backup / Restore</h3>
+<p style="font-size:11px;color:#8b949e;margin-bottom:12px">Download a snapshot of the database (accounts, keys, settings), or restore from one. Restore reloads everything live — no restart needed.</p>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<button class="btn" onclick="downloadBackup()">Download Backup</button>
+<button class="btn" onclick="document.getElementById('restoreFile').click()">Restore from File</button>
+<input type="file" id="restoreFile" accept=".db,.sqlite,.sqlite3,application/x-sqlite3" style="display:none" onchange="restoreBackup(event)">
+</div>
+<div id="restoreResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
+</div>
+
+<div class="form-section">
 <h3>Request Log</h3>
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Total <strong id="rq-total">—</strong></span>
@@ -926,6 +937,37 @@ async function removeApiKey(id) {
     } catch(e) {
         document.getElementById('error').textContent = e.message;
     }
+}
+
+async function downloadBackup() {
+    try {
+        var res = await fetch('/admin/backup', { headers: headers() });
+        if (!res.ok) { document.getElementById('error').textContent = 'Backup failed: ' + res.status; return; }
+        var blob = await res.blob();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a'); a.href = url; a.download = 'hifi-backup.db'; a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById('success').textContent = 'Backup downloaded';
+    } catch(e) { document.getElementById('error').textContent = e.message; }
+}
+
+async function restoreBackup(e) {
+    var file = e.target.files[0]; if (!file) return;
+    if (!confirm('Restore database from ' + file.name + '? Current accounts, keys and settings will be replaced.')) { e.target.value = ''; return; }
+    try {
+        var buf = await file.arrayBuffer();
+        var res = await fetch('/admin/backup/restore', { method: 'POST', headers: headers(), body: buf });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Restored!';
+            document.getElementById('restoreResult').textContent = '';
+            fetchData();
+            loadApiKeys();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Restore failed';
+        }
+    } catch(err) { document.getElementById('error').textContent = 'Restore error: ' + err.message; }
+    e.target.value = '';
 }
 
 async function clearCache() {

@@ -187,6 +187,12 @@ impl AccountManager {
         Ok(())
     }
 
+    /// Drop all in-memory state and reload from the database (used after restore).
+    pub async fn reload_from_db(&self) -> Result<(), AppError> {
+        self.accounts.write().await.clear();
+        self.load_from_db().await
+    }
+
     pub async fn add_account(
         &self,
         label: String,

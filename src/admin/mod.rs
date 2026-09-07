@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod alerts;
+pub mod backup;
 pub mod api_keys;
 pub mod cache;
 pub mod proxies;
