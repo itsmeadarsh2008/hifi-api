@@ -10,6 +10,7 @@ use crate::account_manager::{AccountManager, AccountState};
 use crate::anti_ban::AntiBan;
 use crate::config::Config;
 use crate::error::AppError;
+use crate::notifier::Notifier;
 use crate::proxy_manager::ProxyManager;
 use crate::rate_limit::RateLimitSettings;
 use crate::token_manager::TokenManager;
@@ -20,6 +21,7 @@ pub struct TidalClient {
     account_manager: Arc<AccountManager>,
     anti_ban: Arc<AntiBan>,
     rate_limits: Arc<RateLimitSettings>,
+    notifier: Arc<Notifier>,
     config: Arc<Config>,
 }
 
@@ -31,6 +33,7 @@ impl TidalClient {
         account_manager: Arc<AccountManager>,
         anti_ban: Arc<AntiBan>,
         rate_limits: Arc<RateLimitSettings>,
+        notifier: Arc<Notifier>,
         config: Arc<Config>,
     ) -> Self {
         Self {
@@ -39,6 +42,7 @@ impl TidalClient {
             account_manager,
             anti_ban,
             rate_limits,
+            notifier,
             config,
         }
     }
@@ -101,10 +105,22 @@ impl TidalClient {
             let account = if _account_try == 0 && failed_ids.is_empty() {
                 match preferred_account.clone() {
                     Some(a) => a,
-                    None => self.account_manager.select_account_excluding(&failed_ids).await?,
+                    None => match self.account_manager.select_account_excluding(&failed_ids).await {
+                        Ok(a) => a,
+                        Err(e) => {
+                            self.alert_if_all_down(&e).await;
+                            return Err(e);
+                        }
+                    },
                 }
             } else {
-                self.account_manager.select_account_excluding(&failed_ids).await?
+                match self.account_manager.select_account_excluding(&failed_ids).await {
+                    Ok(a) => a,
+                    Err(e) => {
+                        self.alert_if_all_down(&e).await;
+                        return Err(e);
+                    }
+                }
             };
 
             for attempt in 0..max_retries {
@@ -241,6 +257,8 @@ impl TidalClient {
                         self.account_manager
                             .mark_account_error(&account.id, "Tidal 403 forbidden")
                             .await;
+                        let (healthy, total) = self.account_manager.healthy_count().await;
+                        self.notifier.alert_403(&account.label, healthy, total).await;
                         failed_ids.push(account.id.clone());
                         last_account_error = Some(AppError::UpstreamError(
                             status,
@@ -306,6 +324,15 @@ impl TidalClient {
         Err(last_account_error.unwrap_or(AppError::ServiceUnavailable(
             "All accounts failed after fallback".into(),
         )))
+    }
+
+    async fn alert_if_all_down(&self, e: &AppError) {
+        if let AppError::ServiceUnavailable(msg) = e {
+            if msg.contains("All accounts") {
+                let (_, total) = self.account_manager.healthy_count().await;
+                self.notifier.alert_all_down(total).await;
+            }
+        }
     }
 
     pub async fn make_authed_request(

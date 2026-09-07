@@ -223,6 +223,15 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 
 <div class="form-section">
+<h3>Alerts</h3>
+<div class="card-stats" style="margin-bottom:12px">
+<span class="card-stat">Discord <strong id="al-discord">—</strong></span>
+</div>
+<p style="font-size:11px;color:#8b949e;margin-bottom:12px">Notifies on account 403 (suspension risk) and all-accounts-down. Set <span style="font-family:monospace">DISCORD_WEBHOOK_URL</span> and restart to enable.</p>
+<button class="btn" onclick="testAlert()" id="alertTestBtn">Send Test Alert</button>
+</div>
+
+<div class="form-section">
 <h3>Request Log</h3>
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Total <strong id="rq-total">—</strong></span>
@@ -803,6 +812,36 @@ setInterval(fetchData, 15000);
 loadRateLimits();
 loadProxyStatus();
 setInterval(loadProxyStatus, 15000);
+loadAlertStatus();
+
+async function loadAlertStatus() {
+    try {
+        var res = await fetch('/admin/alerts', { headers: headers() });
+        if (!res.ok) return;
+        var a = (await res.json()).alerts || {};
+        document.getElementById('al-discord').textContent = a.discord_configured ? 'Configured' : 'Not set';
+    } catch(e) {}
+}
+
+async function testAlert() {
+    var btn = document.getElementById('alertTestBtn');
+    btn.textContent = 'Sending...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/alerts/test', { method: 'POST', headers: headers() });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = data.message || 'Test alert sent!';
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = 'Send Test Alert';
+        btn.disabled = false;
+    }
+}
 loadRequestLog();
 setInterval(loadRequestLog, 15000);
 

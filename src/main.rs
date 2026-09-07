@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod error;
 mod ip_limiter;
+mod notifier;
 mod proxy_manager;
 mod rate_limit;
 mod request_log;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub tidal_client: Arc<tidal_client::TidalClient>,
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub anti_ban: Arc<anti_ban::AntiBan>,
+    pub notifier: Arc<notifier::Notifier>,
     pub rate_limits: Arc<rate_limit::RateLimitSettings>,
     pub request_log: Arc<request_log::RequestLog>,
     pub db: Option<sqlx::SqlitePool>,
@@ -154,12 +156,15 @@ async fn main() {
         });
     }
 
+    let notifier = notifier::Notifier::new(config.discord_webhook_url.clone());
+
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
         proxy_manager.clone(),
         token_manager.clone(),
         account_manager.clone(),
         anti_ban.clone(),
         rate_limits.clone(),
+        notifier.clone(),
         config.clone(),
     ));
 
@@ -170,6 +175,7 @@ async fn main() {
         tidal_client: tidal_client.clone(),
         proxy_manager: proxy_manager.clone(),
         anti_ban,
+        notifier,
         rate_limits,
         request_log: Arc::new(request_log::RequestLog::new()),
         db,
@@ -250,6 +256,8 @@ fn admin_api(state: AppState) -> Router<AppState> {
         .route("/accounts/{id}/refresh", post(crate::admin::accounts::refresh_account_token))
         .route("/stats", get(crate::admin::stats::get_stats))
         .route("/proxies", get(crate::admin::proxies::proxy_status))
+        .route("/alerts", get(crate::admin::alerts::alert_status))
+        .route("/alerts/test", post(crate::admin::alerts::alert_test))
         .route("/requests", get(crate::admin::requests::get_requests))
         .route(
             "/settings",

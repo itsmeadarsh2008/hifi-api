@@ -419,6 +419,20 @@ impl AccountManager {
         cleared
     }
 
+    pub async fn healthy_count(&self) -> (usize, usize) {
+        let accounts = self.accounts.read().await;
+        let now = Utc::now().timestamp();
+        let total = accounts.len();
+        let healthy = accounts
+            .iter()
+            .filter(|a| {
+                a.is_active.load(Ordering::Relaxed)
+                    && a.rate_limited_until.load(Ordering::Relaxed) <= now
+            })
+            .count();
+        (healthy, total)
+    }
+
     pub async fn list_accounts(&self) -> Vec<Arc<AccountState>> {
         self.accounts.read().await.clone()
     }

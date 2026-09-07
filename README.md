@@ -85,6 +85,7 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `COOLDOWN_429_SECS` | `90` | Account cooldown after a 429 (editable in admin panel) |
 | `COOLDOWN_403_SECS` | `180` | Account cooldown after a 403 (editable in admin panel) |
 | `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
+| `DISCORD_WEBHOOK_URL` | (none) | Discord webhook for 403/all-down alerts (empty = disabled, test in panel) |
 | `RUST_LOG` | `info` | Log level |
 
 ## Deployment

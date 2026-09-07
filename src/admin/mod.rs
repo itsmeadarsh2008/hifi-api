@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod alerts;
 pub mod proxies;
 pub mod requests;
 pub mod setup;
