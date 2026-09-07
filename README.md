@@ -75,8 +75,9 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `ADMIN_KEY` | (none) | Admin panel auth (empty = open) |
 | `COUNTRY_CODE` | `US` | Tidal region code |
 | `AUTO_SETUP` | `false` | Enable auto-OAuth-setup on first boot |
-| `USE_PROXIES` | `false` | Enable proxy rotation |
-| `PROXIES_FILE` | `proxies.txt` | Proxy list (one per line) |
+| `USE_PROXIES` | `false` | Enable proxy rotation for all Tidal traffic (optional; everything goes direct when off) |
+| `PROXIES_FILE` | `proxies.txt` | Proxy list (one per line, `http(s)://[user:pass@]host:port`) |
+| `FALLBACK_TO_DIRECT_CONNECTION` | `false` | If `true`, fall back to direct when no proxy works (**exposes host IP**); if `false`, Tidal traffic returns 503 until a proxy works |
 | `MAX_RETRIES` | `2` | Retry count on proxy failure |
 | `RATE_LIMIT_RPS` | `20` | Per-IP requests/sec (editable in admin panel) |
 | `RATE_LIMIT_BURST` | `40` | Per-IP burst allowance (editable in admin panel) |
@@ -133,7 +134,24 @@ docker run -d -p 8000:8000 \
 
 Access at `/admin`. If `ADMIN_KEY` is set, include the header `X-Admin-Key: <your_key>`. When empty, the panel is open.
 
+| Section | What it does |
+|---|---|
+| Live request log | Terminal-style tail of recent requests (method, path, status, latency, client IP) with totals, error count, p50/p95 and per-endpoint hits |
+| Accounts | Numbered cards with credentials, user ID, stats, Test/Refresh/Edit/Duplicate/ON-OFF/Delete; **Add via OAuth** asks for an optional label in the modal |
+| Import / Export | Download all credentials as `credentials.json`, or restore from one (duplicates skipped by refresh token) |
+| API Keys | Per-client keys (`X-API-Key`) with quotas. While none exists the API stays open; creating the first key locks public routes behind a key (owner `X-Admin-Key` bypasses) |
+| Rate Limits | Per-IP RPS/burst, global Tidal RPS/burst, 429/403 cooldowns, auto-heal toggle — applied live, persisted to DB |
+| Proxies | Status of the proxy pool (active proxy, pool size, failures). Configure via `USE_PROXIES`/`PROXIES_FILE` + restart |
+| Alerts | Discord webhook status + test button (fires on account 403 and all-accounts-down) |
+| Cache | Metadata cache hits/misses + clear button |
+| Backup / Restore | Download a `hifi.db` snapshot, or restore from one (validated, applied live, no restart) |
+| Emergency | **Test All**, **Clear Limits** (clears all account cooldowns — may get accounts banned again), per-account refresh |
+
 ## Notes
+
+### Preview-only tracks
+
+When a Tidal account's subscription can't access `FULL` quality, Tidal returns a ~30s `PREVIEW` manifest (`FULL_REQUIRES_SUBSCRIPTION`). This API **never proxies the snippet as if it were the full track**: it tries the next account instead, and returns `503 Preview only` if no account can serve `FULL` — so players fall back to another source instead of playing 0:29.
 
 ### Region-locking
 
@@ -348,16 +366,24 @@ Where `manifest` is base64 encoded MPD manifest (use `"manifestMimeType": "appli
 </MPD>
 ```
 
-### `GET /trackManifests/{id}`
+### `GET /trackManifests/{id}` (or `GET /trackManifests/?id=`)
+
+Two equivalent styles (binimum-compatible query style included):
+
+```
+GET /trackManifests/192157851?formats=FLAC_HIRES,FLAC
+GET /trackManifests/?id=192157851&formats=FLAC_HIRES&formats=FLAC
+```
 
 #### Params
 
-- `id`: `str` (required, path) - Tidal track ID.
-- `formats`: `str` (optional, default `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC`) - Requested audio formats, comma-separated.
+- `id`: `str` (required, path **or** query) - Tidal track ID.
+- `formats`: `str` (optional, default `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC`) - Requested audio formats. Accepts comma-separated (`?formats=FLAC,FLAC_HIRES`) or repeated (`?formats=FLAC&formats=FLAC_HIRES`).
 - `adaptive`: `str` (optional, default `true`) - Adaptive streaming (where multiple formats are returned in one response).
 - `manifestType`: `str` (optional, default `MPEG_DASH`, options `MPEG_DASH`, `HLS`) - Manifest type.
 - `uriScheme`: `str` (optional, default `HTTPS`, options `HTTPS`, `DATA`) - URI scheme. DATA returns everything in base64, HTTPS returns a link to the manifest.
 - `usage`: `str` (optional, default `PLAYBACK`, options `PLAYBACK`, `DOWNLOAD`) - Usage type.
+- `countryCode`: `str` (optional, default server `COUNTRY_CODE`) - Override region for this request.
 
 #### Response
 
@@ -425,6 +451,16 @@ Where `manifest` is base64 encoded MPD manifest (use `"manifestMimeType": "appli
 }
 ```
 
+
+### `GET /dash/{id}`
+
+Convenience wrapper for players (`mpv`, `ffplay`): fetches the manifest with `FLAC_HIRES,FLAC,EAC3_JOC,AACLC` and returns a `307` redirect straight to the Tidal `.mpd` URL.
+
+```bash
+mpv --no-ytdl "http://localhost:8000/dash/192157851"
+```
+
+Returns `503` when the track is preview-only for all accounts (see [Preview-only tracks](#preview-only-tracks)).
 
 ### `GET` / `POST /widevine`
 
