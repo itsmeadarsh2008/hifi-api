@@ -13,6 +13,7 @@ pub enum AppError {
     UpstreamError(StatusCode, String),
     Timeout,
     ServiceUnavailable(String),
+    ServiceUnavailableRetry(String, u64),
     Internal(String),
 }
 
@@ -25,6 +26,17 @@ impl IntoResponse for AppError {
             AppError::UpstreamError(s, d) => (s, d),
             AppError::Timeout => (StatusCode::TOO_MANY_REQUESTS, "Upstream timeout".into()),
             AppError::ServiceUnavailable(d) => (StatusCode::SERVICE_UNAVAILABLE, d),
+            AppError::ServiceUnavailableRetry(d, secs) => {
+                let mut resp =
+                    (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail": d}))).into_response();
+                if secs > 0 {
+                    resp.headers_mut().insert(
+                        axum::http::header::RETRY_AFTER,
+                        secs.to_string().parse().unwrap(),
+                    );
+                }
+                return resp;
+            }
             AppError::Internal(d) => (StatusCode::INTERNAL_SERVER_ERROR, d),
         };
 
@@ -48,8 +60,33 @@ impl fmt::Display for AppError {
             AppError::UpstreamError(s, d) => write!(f, "Upstream {}: {}", s, d),
             AppError::Timeout => write!(f, "Timeout"),
             AppError::ServiceUnavailable(d) => write!(f, "Service unavailable: {}", d),
+            AppError::ServiceUnavailableRetry(d, s) => {
+                write!(f, "Service unavailable: {} (retry in {}s)", d, s)
+            }
             AppError::Internal(d) => write!(f, "Internal error: {}", d),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn retry_after_header_present_when_secs_positive() {
+        let resp = AppError::ServiceUnavailableRetry("busy".into(), 137).into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            resp.headers().get("retry-after").unwrap(),
+            "137"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_after_header_omitted_when_zero() {
+        let resp = AppError::ServiceUnavailableRetry("busy".into(), 0).into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(resp.headers().get("retry-after").is_none());
     }
 }
 

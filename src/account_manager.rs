@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use chrono::Utc;
+use rand::Rng;
 use serde::Deserialize;
 use sqlx::FromRow;
 use sqlx::SqlitePool;
@@ -299,12 +300,33 @@ impl AccountManager {
             let recency_score = self.weights.recency * (recency / 3600.0).min(1.0).max(0.0);
             let error_score = self.weights.error * (1.0 - error_rate);
 
-            scored.push((usage_score + recency_score + error_score, i));
+            let mut score = usage_score + recency_score + error_score;
+            // Recovery ramp: a freshly unparked account scores highest on
+            // usage+recency and would absorb everything until re-parked.
+            // Ramp it back over 3 minutes so traffic spreads instead.
+            if rate_limited_until > 0 {
+                let recovered_ago = (now - rate_limited_until).max(0) as f64;
+                if recovered_ago < 180.0 {
+                    score *= (recovered_ago / 180.0).max(0.05);
+                }
+            }
+
+            scored.push((score, i));
         }
 
         if scored.is_empty() {
-            return Err(AppError::ServiceUnavailable(
+            // Tell clients how long to back off: soonest parked-account recovery.
+            let retry_after = accounts
+                .iter()
+                .filter(|a| a.is_active.load(Ordering::Relaxed))
+                .map(|a| a.rate_limited_until.load(Ordering::Relaxed) - now)
+                .filter(|&r| r > 0)
+                .min()
+                .unwrap_or(0)
+                .max(0) as u64;
+            return Err(AppError::ServiceUnavailableRetry(
                 "All accounts are inactive, rate-limited, or have expired tokens".into(),
+                retry_after,
             ));
         }
 
@@ -337,7 +359,10 @@ impl AccountManager {
     }
 
     pub async fn mark_account_rate_limited(&self, id: &str, duration_secs: i64) {
-        let until = Utc::now().timestamp() + duration_secs;
+        // Desync herd recoveries: without jitter every account parked by the
+        // same burst unparks simultaneously and gets re-slammed together.
+        let jitter = rand::thread_rng().gen_range(0..=(duration_secs.max(1) / 4));
+        let until = Utc::now().timestamp() + duration_secs + jitter;
         if let Some(account) = self.get_account_by_id(id).await {
             account.rate_limit_hits.fetch_add(1, Ordering::Relaxed);
             account.rate_limited_until.store(until, Ordering::Relaxed);
