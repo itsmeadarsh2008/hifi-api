@@ -92,7 +92,7 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `IP_DELAY_CAP_MS` | `2000` | Max slowdown for soft-over-limit requests before 429 (editable in admin panel) |
 | `REPUTATION_ENABLED` | `true` | Auto-tune per-IP patience from behavior (editable in admin panel) |
 | `IP_ALLOWLIST` / `IP_DENYLIST` | (none) | Comma-separated IPs; allow bypasses limits, deny gets instant 403 (editable in admin panel) |
-| `ATMOS_MODE` | `off` | Default Atmos preference for manifests/dash: `off` (FLAC first) or `prefer` (EAC3_JOC first); `?atmos=` overrides per request |
+| `ATMOS_MODE` | `prefer` | Default Atmos preference for manifests/dash: `prefer` (EAC3_JOC first) or `off` (FLAC first); `?atmos=` overrides per request |
 | `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
 | `DISCORD_WEBHOOK_URL` | (none) | Discord webhook for 403/all-down alerts (empty = disabled, test in panel) |
 | `RUST_LOG` | `info` | Log level |
@@ -168,7 +168,7 @@ Tidal appears to region lock by account, not by countryCode. Nevertheless, count
 
 Usually, tracks that support Atmos will have `DOLBY_ATMOS` in `mediaMetadata.tags`. To request Dolby Atmos tracks, use the new `trackManifests` endpoint - see its spec for more info on Atmos.
 
-Control preference with `?atmos=true|only|off` on `/trackManifests` and `/dash` (server default via `ATMOS_MODE`, overridable per request). Responses include a top-level `atmos_available` flag when the manifest actually carries an `EAC3_JOC` rendition. Note: Atmos needs a Dolby-capable player plus a Widevine license (proxied through `/widevine`); most browsers can't play EAC-3 JOC, so FLAC stays the default unless you opt in.
+Control preference with `?atmos=true|only|off` on `/trackManifests` and `/dash` (server default via `ATMOS_MODE=prefer`, overridable per request). Responses include a top-level `atmos_available` flag when the manifest actually carries an `EAC3_JOC` rendition. Note: Atmos needs a Dolby-capable player plus a Widevine license (proxied through `/widevine`); most browsers can't play EAC-3 JOC, so pass `?atmos=off` for plain FLAC.
 
 ## API Schema
 

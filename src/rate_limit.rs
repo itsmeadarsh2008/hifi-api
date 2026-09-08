@@ -63,7 +63,7 @@ impl RateLimitSettings {
             reputation_enabled: AtomicBool::new(env_bool("REPUTATION_ENABLED", true)),
             ip_allowlist: RwLock::new(parse_ip_list(&std::env::var("IP_ALLOWLIST").unwrap_or_default())),
             ip_denylist: RwLock::new(parse_ip_list(&std::env::var("IP_DENYLIST").unwrap_or_default())),
-            atmos_mode: RwLock::new(normalize_atmos_mode(&std::env::var("ATMOS_MODE").unwrap_or_default())),
+            atmos_mode: RwLock::new(default_atmos_mode()),
         }
     }
 
@@ -88,7 +88,7 @@ impl RateLimitSettings {
             "reputation_enabled": self.reputation_enabled.load(Ordering::Relaxed),
             "ip_allowlist": self.ip_allowlist.read().map(|v| v.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default(),
             "ip_denylist": self.ip_denylist.read().map(|v| v.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default(),
-            "atmos_mode": self.atmos_mode.read().map(|v| v.clone()).unwrap_or_else(|_| "off".to_string()),
+            "atmos_mode": self.atmos_mode.read().map(|v| v.clone()).unwrap_or_else(|_| "prefer".to_string()),
         })
     }
 
@@ -296,7 +296,7 @@ impl RateLimitSettings {
             ("auto_heal", self.auto_heal.load(Ordering::Relaxed).to_string()),
             ("ip_allowlist", self.ip_allowlist.read().map(|v| v.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default()),
             ("ip_denylist", self.ip_denylist.read().map(|v| v.iter().map(|ip| ip.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default()),
-            ("atmos_mode", self.atmos_mode.read().map(|v| v.clone()).unwrap_or_else(|_| "off".to_string())),
+            ("atmos_mode", self.atmos_mode.read().map(|v| v.clone()).unwrap_or_else(|_| "prefer".to_string())),
             ("account_rps", self.account_rps.load(Ordering::Relaxed).to_string()),
             ("account_burst", self.account_burst.load(Ordering::Relaxed).to_string()),
             ("reserve_accounts", self.reserve_accounts.load(Ordering::Relaxed).to_string()),
@@ -378,6 +378,14 @@ fn normalize_atmos_mode(s: &str) -> String {
     }
 }
 
+/// Server default: Atmos preferred unless explicitly turned off.
+fn default_atmos_mode() -> String {
+    match std::env::var("ATMOS_MODE") {
+        Ok(v) if !v.trim().is_empty() => normalize_atmos_mode(&v),
+        _ => "prefer".to_string(),
+    }
+}
+
 fn first_opt_string(obj: &Value, keys: &[&str]) -> Result<Option<String>, String> {
     for key in keys {
         match obj.get(key) {
@@ -424,4 +432,39 @@ fn first_opt_i64(obj: &Value, keys: &[&str]) -> Result<Option<i64>, String> {
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_atmos_mode, normalize_atmos_mode};
+
+    #[test]
+    fn atmos_explicit_values_honored() {
+        assert_eq!(normalize_atmos_mode("prefer"), "prefer");
+        assert_eq!(normalize_atmos_mode("off"), "off");
+        assert_eq!(normalize_atmos_mode("banana"), "off");
+    }
+
+    #[test]
+    fn atmos_defaults_to_prefer_when_unset() {
+        let saved = std::env::var("ATMOS_MODE").ok();
+        unsafe {
+            std::env::remove_var("ATMOS_MODE");
+        }
+        assert_eq!(default_atmos_mode(), "prefer");
+        unsafe {
+            std::env::set_var("ATMOS_MODE", "");
+        }
+        assert_eq!(default_atmos_mode(), "prefer");
+        unsafe {
+            std::env::set_var("ATMOS_MODE", "off");
+        }
+        assert_eq!(default_atmos_mode(), "off");
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("ATMOS_MODE", v),
+                None => std::env::remove_var("ATMOS_MODE"),
+            }
+        }
+    }
 }
