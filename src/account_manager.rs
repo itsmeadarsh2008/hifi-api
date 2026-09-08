@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::rate_limit::RateLimitSettings;
 
 #[derive(Clone, Debug)]
 pub struct SwitchingWeights {
@@ -49,6 +50,13 @@ pub struct AccountState {
     pub error_count: AtomicU64,
     pub rate_limit_hits: AtomicU64,
     pub rate_limited_until: AtomicI64,
+    /// Tidal calls served this UTC day (resets on rollover). Bounded by
+    /// the per-account daily budget; persisted periodically.
+    pub day_requests: AtomicU64,
+    /// UTC day number (timestamp / 86400) the counter above belongs to.
+    pub day_start: AtomicI64,
+    /// UTC day number a budget alert was last sent for this account.
+    pub day_alerted: AtomicI64,
 }
 
 impl AccountState {
@@ -82,8 +90,16 @@ impl AccountState {
             error_count: AtomicU64::new(0),
             rate_limit_hits: AtomicU64::new(0),
             rate_limited_until: AtomicI64::new(0),
+            day_requests: AtomicU64::new(0),
+            day_start: AtomicI64::new(0),
+            day_alerted: AtomicI64::new(0),
         }
     }
+}
+
+/// UTC day number for a unix timestamp. Pure function — unit tested.
+pub fn utc_day(ts: i64) -> i64 {
+    ts.div_euclid(86400)
 }
 
 #[derive(Debug, Deserialize, FromRow)]
@@ -116,14 +132,20 @@ fn user_id_from_label(label: &str) -> Option<&str> {
 pub struct AccountManager {
     accounts: RwLock<Vec<Arc<AccountState>>>,
     weights: SwitchingWeights,
+    settings: Arc<RateLimitSettings>,
     db: Option<SqlitePool>,
 }
 
 impl AccountManager {
-    pub fn new(db: Option<SqlitePool>, weights: SwitchingWeights) -> Self {
+    pub fn new(
+        db: Option<SqlitePool>,
+        weights: SwitchingWeights,
+        settings: Arc<RateLimitSettings>,
+    ) -> Self {
         Self {
             accounts: RwLock::new(Vec::new()),
             weights,
+            settings,
             db,
         }
     }
@@ -191,7 +213,76 @@ impl AccountManager {
     /// Drop all in-memory state and reload from the database (used after restore).
     pub async fn reload_from_db(&self) -> Result<(), AppError> {
         self.accounts.write().await.clear();
-        self.load_from_db().await
+        self.load_from_db().await?;
+        self.load_daily_usage().await;
+        Ok(())
+    }
+
+    /// Load today's per-account counters (survives restarts mid-day).
+    pub async fn load_daily_usage(&self) {
+        let db = match &self.db {
+            Some(db) => db,
+            None => return,
+        };
+        let today = utc_day(Utc::now().timestamp());
+        let rows: Vec<(String, i64)> =
+            match sqlx::query_as("SELECT account_id, count FROM daily_usage WHERE day = ?")
+                .bind(today)
+                .fetch_all(db)
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+        let accounts = self.accounts.read().await;
+        for (id, count) in rows {
+            if let Some(a) = accounts.iter().find(|a| a.id == id) {
+                a.day_start.store(today, Ordering::Relaxed);
+                a.day_requests.store(count.max(0) as u64, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Persist today's per-account counters (called periodically; cheap).
+    pub async fn flush_daily_usage(&self) {
+        let db = match &self.db {
+            Some(db) => db,
+            None => return,
+        };
+        let today = utc_day(Utc::now().timestamp());
+        let snapshot: Vec<(String, u64, i64)> = {
+            let accounts = self.accounts.read().await;
+            accounts
+                .iter()
+                .map(|a| {
+                    (
+                        a.id.clone(),
+                        a.day_requests.load(Ordering::Relaxed),
+                        a.day_start.load(Ordering::Relaxed),
+                    )
+                })
+                .collect()
+        };
+        for (id, count, day) in snapshot {
+            // Only today's rows matter; stale days are dropped on read.
+            if day != 0 && day != today {
+                continue;
+            }
+            let _ = sqlx::query(
+                "INSERT INTO daily_usage (account_id, day, count) VALUES (?, ?, ?)
+                 ON CONFLICT(account_id) DO UPDATE SET day = excluded.day, count = excluded.count",
+            )
+            .bind(&id)
+            .bind(today)
+            .bind(count as i64)
+            .execute(db)
+            .await;
+        }
+        // Drop rows from previous days.
+        let _ = sqlx::query("DELETE FROM daily_usage WHERE day != ?")
+            .bind(today)
+            .execute(db)
+            .await;
     }
 
     pub async fn add_account(
@@ -285,6 +376,20 @@ impl AccountManager {
                 continue;
             }
 
+            // Daily budget: roll over at UTC midnight, exclude spent accounts.
+            // 0 budget = unlimited.
+            let budget = self.settings.daily_budget_per_account.load(Ordering::Relaxed);
+            if budget > 0 {
+                let today = utc_day(now);
+                if account.day_start.load(Ordering::Relaxed) != today {
+                    account.day_start.store(today, Ordering::Relaxed);
+                    account.day_requests.store(0, Ordering::Relaxed);
+                }
+                if account.day_requests.load(Ordering::Relaxed) >= budget {
+                    continue;
+                }
+            }
+
             let usage = account.request_count.load(Ordering::Relaxed).max(1) as f64;
             let last_used = account.last_used.load(Ordering::Relaxed);
             let recency = if last_used > 0 {
@@ -334,6 +439,15 @@ impl AccountManager {
         let best = &accounts[scored[0].1];
         best.last_used.store(now, Ordering::Relaxed);
         best.request_count.fetch_add(1, Ordering::Relaxed);
+        // Count toward the daily budget (rollover already ensured above when
+        // budgets are enabled; do it unconditionally here for fresh accounts
+        // added mid-day or budget toggled on later).
+        let today = utc_day(now);
+        if best.day_start.load(Ordering::Relaxed) != today {
+            best.day_start.store(today, Ordering::Relaxed);
+            best.day_requests.store(0, Ordering::Relaxed);
+        }
+        best.day_requests.fetch_add(1, Ordering::Relaxed);
         Ok(best.clone())
     }
 
@@ -487,6 +601,15 @@ impl AccountManager {
         cleared
     }
 
+    pub async fn active_count(&self) -> usize {
+        self.accounts
+            .read()
+            .await
+            .iter()
+            .filter(|a| a.is_active.load(Ordering::Relaxed))
+            .count()
+    }
+
     pub async fn healthy_count(&self) -> (usize, usize) {
         let accounts = self.accounts.read().await;
         let now = Utc::now().timestamp();
@@ -507,5 +630,28 @@ impl AccountManager {
 
     pub async fn account_count(&self) -> usize {
         self.accounts.read().await.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utc_day;
+
+    #[test]
+    fn utc_day_boundaries() {
+        // 1970-01-01T00:00:00Z == day 0; 86399 still day 0; 86400 day 1.
+        assert_eq!(utc_day(0), 0);
+        assert_eq!(utc_day(86399), 0);
+        assert_eq!(utc_day(86400), 1);
+        // Negative timestamps (pre-1970) still bucket consistently.
+        assert_eq!(utc_day(-1), -1);
+        assert_eq!(utc_day(-86400), -1);
+    }
+
+    #[test]
+    fn utc_day_rollover_detected() {
+        let monday_2359 = 86400 * 100 + 86399;
+        let tuesday_0001 = 86400 * 101 + 60;
+        assert_ne!(utc_day(monday_2359), utc_day(tuesday_0001));
     }
 }

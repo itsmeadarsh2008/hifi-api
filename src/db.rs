@@ -65,6 +65,16 @@ pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
     .await?;
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS daily_usage (
+            account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+            day INTEGER NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS api_keys (
             id TEXT PRIMARY KEY,
             label TEXT NOT NULL DEFAULT '',

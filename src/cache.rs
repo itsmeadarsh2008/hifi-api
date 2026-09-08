@@ -1,12 +1,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use axum::body::{to_bytes, Body, Bytes};
 use axum::extract::State;
 use axum::http::{Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use moka::future::Cache;
+use tokio::sync::Mutex;
 
 use crate::AppState;
 
@@ -42,8 +45,12 @@ pub(crate) struct CachedResponse {
 
 pub struct ResponseCache {
     cache: Cache<String, CachedResponse>,
+    /// Per-key in-flight guards: concurrent identical requests collapse onto
+    /// the leader instead of stampeding Tidal. Auto-evicts via TTL.
+    inflight: Cache<String, Arc<Mutex<()>>>,
     pub hits: AtomicU64,
     pub misses: AtomicU64,
+    pub coalesced: AtomicU64,
 }
 
 impl ResponseCache {
@@ -53,8 +60,13 @@ impl ResponseCache {
                 .time_to_live(Duration::from_secs(CACHE_TTL_SECS))
                 .max_capacity(2000)
                 .build(),
+            inflight: Cache::builder()
+                .time_to_live(Duration::from_secs(60))
+                .max_capacity(2000)
+                .build(),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
+            coalesced: AtomicU64::new(0),
         }
     }
 
@@ -110,6 +122,20 @@ pub async fn cache_responses(
 
     if let Some(hit) = state.cache.get(&key).await {
         state.cache.hits.fetch_add(1, Ordering::Relaxed);
+        return build_response(&hit, true);
+    }
+
+    // Singleflight: serialize identical concurrent misses on a per-key lock,
+    // then re-check — followers get the leader's cached response.
+    let guard = state
+        .cache
+        .inflight
+        .get_with(key.clone(), async { Arc::new(Mutex::new(())) })
+        .await;
+    let _lock = guard.lock().await;
+    if let Some(hit) = state.cache.get(&key).await {
+        state.cache.hits.fetch_add(1, Ordering::Relaxed);
+        state.cache.coalesced.fetch_add(1, Ordering::Relaxed);
         return build_response(&hit, true);
     }
     state.cache.misses.fetch_add(1, Ordering::Relaxed);

@@ -12,6 +12,7 @@ pub enum AppError {
     Unauthorized(String),
     UpstreamError(StatusCode, String),
     Timeout,
+    TooManyRequests(String, u64),
     ServiceUnavailable(String),
     ServiceUnavailableRetry(String, u64),
     Internal(String),
@@ -25,6 +26,17 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(d) => (StatusCode::UNAUTHORIZED, d),
             AppError::UpstreamError(s, d) => (s, d),
             AppError::Timeout => (StatusCode::TOO_MANY_REQUESTS, "Upstream timeout".into()),
+            AppError::TooManyRequests(d, secs) => {
+                let mut resp =
+                    (StatusCode::TOO_MANY_REQUESTS, Json(json!({"detail": d}))).into_response();
+                if secs > 0 {
+                    resp.headers_mut().insert(
+                        axum::http::header::RETRY_AFTER,
+                        secs.to_string().parse().unwrap(),
+                    );
+                }
+                return resp;
+            }
             AppError::ServiceUnavailable(d) => (StatusCode::SERVICE_UNAVAILABLE, d),
             AppError::ServiceUnavailableRetry(d, secs) => {
                 let mut resp =
@@ -59,6 +71,9 @@ impl fmt::Display for AppError {
             AppError::Unauthorized(d) => write!(f, "Unauthorized: {}", d),
             AppError::UpstreamError(s, d) => write!(f, "Upstream {}: {}", s, d),
             AppError::Timeout => write!(f, "Timeout"),
+            AppError::TooManyRequests(d, s) => {
+                write!(f, "Too many requests: {} (retry in {}s)", d, s)
+            }
             AppError::ServiceUnavailable(d) => write!(f, "Service unavailable: {}", d),
             AppError::ServiceUnavailableRetry(d, s) => {
                 write!(f, "Service unavailable: {} (retry in {}s)", d, s)
@@ -87,6 +102,13 @@ mod tests {
         let resp = AppError::ServiceUnavailableRetry("busy".into(), 0).into_response();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(resp.headers().get("retry-after").is_none());
+    }
+
+    #[tokio::test]
+    async fn too_many_requests_shape() {
+        let resp = AppError::TooManyRequests("slow down".into(), 7).into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers().get("retry-after").unwrap(), "7");
     }
 }
 

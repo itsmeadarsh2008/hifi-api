@@ -180,6 +180,41 @@ impl Notifier {
         )
     }
 
+    /// Fired on conservation-mode transitions.
+    pub async fn alert_conservation(&self, entered: bool, healthy: usize, total: usize) {
+        let payload = if entered {
+            Self::embed(
+                "🐢 Conservation mode ON",
+                "Healthy pool at/below reserve. Shedding load with trickle + fail-fast to protect the remaining accounts.",
+                0xD29922,
+                vec![json!({"name": "Healthy", "value": format!("{}/{}", healthy, total), "inline": true})],
+            )
+        } else {
+            Self::embed(
+                "✅ Conservation mode OFF",
+                "Pool recovered above reserve. Normal limits restored.",
+                0x3FB950,
+                vec![json!({"name": "Healthy", "value": format!("{}/{}", healthy, total), "inline": true})],
+            )
+        };
+        let kind = if entered { "conserve-enter" } else { "conserve-exit" };
+        self.send_throttled(kind, payload).await;
+    }
+
+    /// Fired once per account per day when it crosses the budget alert threshold.
+    pub async fn alert_budget(&self, code: &str, used: u64, budget: u64) {
+        let payload = Self::embed(
+            "📊 Daily budget warning",
+            "An account crossed its daily budget alert threshold.",
+            0xD29922,
+            vec![
+                json!({"name": "Account", "value": code, "inline": true}),
+                json!({"name": "Used", "value": format!("{}/{}", used, budget), "inline": true}),
+            ],
+        );
+        self.send_throttled(&format!("budget-{}", code), payload).await;
+    }
+
     /// Manual test from the admin panel (bypasses throttle).
     pub async fn send_test(&self) -> Result<(), String> {
         if self.webhook_url.is_empty() {

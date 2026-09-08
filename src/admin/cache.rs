@@ -12,6 +12,7 @@ pub async fn cache_stats(
     Ok(Json(json!({ "cache": {
         "hits": state.cache.hits.load(Ordering::Relaxed),
         "misses": state.cache.misses.load(Ordering::Relaxed),
+        "coalesced": state.cache.coalesced.load(Ordering::Relaxed),
     } })))
 }
 
