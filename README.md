@@ -24,7 +24,7 @@ This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences
 | **Memory** | ~100-200 MB idle | ~5-15 MB idle |
 | **Startup time** | ~2-5 seconds (import overhead) | ~100ms (compiled binary) |
 | **Concurrent connections** | ~50-100 per instance (async Python, GIL-bound) | ~5,000-10,000 concurrent tasks per instance (tokio M:N threading, no GIL)¹ |
-| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate), per-IP keyed throttle (abusive clients get 429 without affecting others), request jitter (±20%), staggered token refresh, automatic 429/401 rotation |
+| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate), tiered per-IP throttle with graduated slowdown + reputation, pool-scaled upstream caps, reserve guarantee with conservation mode, per-account daily budgets, request jitter (±20%), staggered token refresh, automatic 429/401 rotation |
 | **Request distribution** | Full requests, one account at a time | Traffic split into smaller chunks across accounts — each account serves fewer requests per minute, reducing Tidal's rate-limit triggers |
 | **Token cache** | In-memory dict | moka (TTL-aware, bounded) |
 | **Rate limiter** | Custom sleep-based | governor (GCRA algorithm) |
@@ -143,18 +143,32 @@ Access at `/admin`. If `ADMIN_KEY` is set, include the header `X-Admin-Key: <you
 
 | Section | What it does |
 |---|---|
-| Live request log | Terminal-style tail of recent requests (method, path, status, latency, client IP) with totals, error count, p50/p95 and per-endpoint hits |
-| Accounts | Numbered cards with credentials, user ID, stats, Test/Refresh/Edit/Duplicate/ON-OFF/Delete; **Add via OAuth** asks for an optional label in the modal |
+| Live request log | Terminal-style tail of recent requests (method, path, song ID, status, latency, client IP) with totals, error count, p50/p95, per-endpoint hits and top tracks |
+| Accounts | Numbered cards with credentials, user ID, stats, per-account daily usage bars, Test/Refresh/Edit/Duplicate/ON-OFF/Delete; **Add via OAuth** asks for an optional label in the modal |
 | Import / Export | Download all credentials as `credentials.json`, or restore from one (duplicates skipped by refresh token) |
 | API Keys | Per-client keys (`X-API-Key`) with quotas. While none exists the API stays open; creating the first key locks public routes behind a key (owner `X-Admin-Key` bypasses) |
-| Rate Limits | Per-IP RPS/burst, global Tidal RPS/burst, 429/403 cooldowns, auto-heal toggle — applied live, persisted to DB |
+| Rate Limits | Per-IP and per-account budgets, cooldowns, reserve/conservation, daily budgets, IP tiers + reputation, allow/deny lists, Atmos default, auto-heal toggle — applied live, persisted to DB. See [Rate limiting](#rate-limiting) |
 | Proxies | Status of the proxy pool (active proxy, pool size, failures). Configure via `USE_PROXIES`/`PROXIES_FILE` + restart |
-| Alerts | Discord webhook status + test button (fires on account 403 and all-accounts-down) |
+| Alerts | Discord webhook status + test button (fires on account 403 and all-accounts-down); on-demand Status and Accounts-roster reports (accounts shown as `TIDAL-1…N`, never real names) |
 | Cache | Metadata cache hits/misses + clear button |
 | Backup / Restore | Download a `hifi.db` snapshot, or restore from one (validated, applied live, no restart) |
 | Emergency | **Test All**, **Clear Limits** (clears all account cooldowns — may get accounts banned again), per-account refresh |
 
 ## Notes
+
+### Rate limiting
+
+Three layers, cheapest check first:
+
+1. **Per-IP edge** — every client IP gets a generous bucket for cheap routes (cached metadata, health) and a stricter one for Tidal-hitting routes (`/track`, `/trackManifests`, `/dash`, …). Going mildly over doesn't reject you: the request is *slowed down* (capped by `IP_DELAY_CAP_MS`) instead of 429ed. Only sustained abuse gets `429 + Retry-After`.
+2. **IP reputation** — each IP earns patience with varied, successful traffic and loses it with junk queries, 4xx/5xx storms and 429 hits. Well-behaved households and carrier-grade NATs automatically get up to 2× headroom; abusers get cut off fast. `IP_ALLOWLIST` bypasses everything, `IP_DENYLIST` gets instant 403.
+3. **Pool-aware upstream throttle** — the global Tidal cap scales as `TIDAL_RPS_PER_ACCOUNT × healthy accounts` (capped by `TIDAL_RPS`), so adding accounts raises throughput automatically. Each account also has its own token bucket plus a **daily budget** (`DAILY_BUDGET_PER_ACCOUNT`, UTC rollover, persisted) — spent accounts leave rotation until midnight, with a Discord warning at 80%.
+
+**Reserve guarantee:** at or under `RESERVE_ACCOUNTS` healthy accounts the pool enters **conservation mode** — traffic trickles (`CONSERVE_TRICKLE_RPS`) and excess fails fast with `429 + Retry-After` instead of burning the last accounts. Cooldowns are jittered and fresh recoveries ramp up over 3 minutes so accounts don't all re-enter (and re-ban) simultaneously. Watch for the 🐢 badge in the panel.
+
+Capacity math: with 7 accounts × 6000 reqs/day you have ~42k Tidal calls/day (~140/user/day across 300 users). Averages are trivial — size for *peak concurrency*, and let the daily budgets absorb it.
+
+Identical concurrent requests (e.g. ten users hitting the same search) are coalesced into one upstream call.
 
 ### Preview-only tracks
 
@@ -393,6 +407,7 @@ GET /trackManifests/?id=192157851&formats=FLAC_HIRES&formats=FLAC
 - `uriScheme`: `str` (optional, default `HTTPS`, options `HTTPS`, `DATA`) - URI scheme. DATA returns everything in base64, HTTPS returns a link to the manifest.
 - `usage`: `str` (optional, default `PLAYBACK`, options `PLAYBACK`, `DOWNLOAD`) - Usage type.
 - `countryCode`: `str` (optional, default server `COUNTRY_CODE`) - Override region for this request.
+- `atmos`: `str` (optional, default server `ATMOS_MODE`) - `true`/`prefer` puts `EAC3_JOC` first, `only` requests just it, `off` strips it. Explicit `formats=` are always respected verbatim.
 
 #### Response
 
@@ -463,11 +478,15 @@ GET /trackManifests/?id=192157851&formats=FLAC_HIRES&formats=FLAC
 
 ### `GET /dash/{id}`
 
-Convenience wrapper for players (`mpv`, `ffplay`): fetches the manifest with `FLAC_HIRES,FLAC,EAC3_JOC,AACLC` and returns a `307` redirect straight to the Tidal `.mpd` URL.
+Convenience wrapper for players (`mpv`, `ffplay`): fetches the manifest and returns a `307` redirect straight to the Tidal `.mpd` URL.
 
 ```bash
 mpv --no-ytdl "http://localhost:8000/dash/192157851"
 ```
+
+#### Params
+
+- `atmos`: `str` (optional, default server `ATMOS_MODE`) - `true`/`prefer` puts `EAC3_JOC` first, `only` requests just it, `off` strips it (plain `FLAC_HIRES,FLAC,AACLC` chain).
 
 Returns `503` when the track is preview-only for all accounts (see [Preview-only tracks](#preview-only-tracks)).
 
