@@ -82,6 +82,17 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `COOLDOWN_429_SECS` | `90` | Account cooldown after a 429 (editable in admin panel) |
 | `COOLDOWN_403_SECS` | `180` | Account cooldown after a 403 (editable in admin panel) |
 | `AUTO_HEAL` | `true` | Retry system-disabled accounts with backoff (never touches manual OFF; editable in admin panel) |
+| `TIDAL_RPS_PER_ACCOUNT` | `2` | Per-account sustained Tidal rps; effective global cap ≈ this × healthy accounts, capped by `TIDAL_RPS` (editable in admin panel) |
+| `TIDAL_BURST_PER_ACCOUNT` | `4` | Per-account burst allowance (editable in admin panel) |
+| `RESERVE_ACCOUNTS` | `2` | Keep at least this many healthy: at/under it the pool conserves (trickle + fail-fast 429s) instead of burning the last accounts (editable in admin panel) |
+| `CONSERVE_TRICKLE_RPS` | `1` | Global Tidal rps while conserving (editable in admin panel) |
+| `DAILY_BUDGET_PER_ACCOUNT` | `6000` | Max Tidal calls per account per UTC day, `0` = unlimited; spent accounts leave rotation until rollover (editable in admin panel) |
+| `DAILY_BUDGET_ALERT_PCT` | `80` | Discord warning when an account crosses this % of its daily budget |
+| `IP_COSTLY_RPS` / `IP_COSTLY_BURST` | `5` / `10` | Stricter per-IP bucket for Tidal-hitting routes only (editable in admin panel) |
+| `IP_DELAY_CAP_MS` | `2000` | Max slowdown for soft-over-limit requests before 429 (editable in admin panel) |
+| `REPUTATION_ENABLED` | `true` | Auto-tune per-IP patience from behavior (editable in admin panel) |
+| `IP_ALLOWLIST` / `IP_DENYLIST` | (none) | Comma-separated IPs; allow bypasses limits, deny gets instant 403 (editable in admin panel) |
+| `ATMOS_MODE` | `off` | Default Atmos preference for manifests/dash: `off` (FLAC first) or `prefer` (EAC3_JOC first); `?atmos=` overrides per request |
 | `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
 | `DISCORD_WEBHOOK_URL` | (none) | Discord webhook for 403/all-down alerts (empty = disabled, test in panel) |
 | `RUST_LOG` | `info` | Log level |
@@ -156,6 +167,8 @@ Tidal appears to region lock by account, not by countryCode. Nevertheless, count
 ### Dolby Atmos
 
 Usually, tracks that support Atmos will have `DOLBY_ATMOS` in `mediaMetadata.tags`. To request Dolby Atmos tracks, use the new `trackManifests` endpoint - see its spec for more info on Atmos.
+
+Control preference with `?atmos=true|only|off` on `/trackManifests` and `/dash` (server default via `ATMOS_MODE`, overridable per request). Responses include a top-level `atmos_available` flag when the manifest actually carries an `EAC3_JOC` rendition. Note: Atmos needs a Dolby-capable player plus a Widevine license (proxied through `/widevine`); most browsers can't play EAC-3 JOC, so FLAC stays the default unless you opt in.
 
 ## API Schema
 

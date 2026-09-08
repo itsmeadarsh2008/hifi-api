@@ -94,6 +94,21 @@ impl TidalClient {
             1
         };
 
+        // Conservation shed: when the healthy pool is at/under reserve,
+        // fail fast with 429 instead of spending the last accounts.
+        if self.anti_ban.in_conservation() {
+            if let Err(wait) = self.anti_ban.check_conserve() {
+                let secs = wait.as_secs().max(1);
+                return Err(AppError::TooManyRequests(
+                    format!(
+                        "Conservation mode: pool nearly exhausted, retry in {}s.",
+                        secs
+                    ),
+                    secs,
+                ));
+            }
+        }
+
         let http = self.working_client().await?;
 
         let mut failed_ids: Vec<String> = Vec::new();
@@ -123,8 +138,11 @@ impl TidalClient {
                 }
             };
 
+            self.maybe_alert_budget(&account).await;
+
             for attempt in 0..max_retries {
                 self.anti_ban.throttle_tidal().await;
+                self.anti_ban.throttle_account(&account.id).await;
 
                 let token = match self
                     .token_manager
@@ -324,6 +342,40 @@ impl TidalClient {
         Err(last_account_error.unwrap_or(AppError::ServiceUnavailable(
             "All accounts failed after fallback".into(),
         )))
+    }
+
+    /// Warn once per account per day when its daily budget crosses the alert pct.
+    async fn maybe_alert_budget(&self, account: &AccountState) {
+        use std::sync::atomic::Ordering;
+        let budget = self.rate_limits.daily_budget_per_account.load(Ordering::Relaxed);
+        if budget == 0 {
+            return;
+        }
+        let pct = self.rate_limits.daily_budget_alert_pct.load(Ordering::Relaxed).min(100);
+        let used = account.day_requests.load(Ordering::Relaxed);
+        if used * 100 < budget * pct {
+            return;
+        }
+        let today = crate::account_manager::utc_day(chrono::Utc::now().timestamp());
+        if account.day_alerted.load(Ordering::Relaxed) == today {
+            return;
+        }
+        account.day_alerted.store(today, Ordering::Relaxed);
+        // Stable codename (matches accounts roster reports).
+        let mut ids: Vec<String> = self
+            .account_manager
+            .list_accounts()
+            .await
+            .iter()
+            .map(|a| a.id.clone())
+            .collect();
+        ids.sort();
+        let code = ids
+            .iter()
+            .position(|id| *id == account.id)
+            .map(|i| format!("TIDAL-{}", i + 1))
+            .unwrap_or_else(|| "TIDAL-?".to_string());
+        self.notifier.alert_budget(&code, used, budget).await;
     }
 
     async fn alert_if_all_down(&self, e: &AppError) {

@@ -29,6 +29,11 @@ pub async fn get_stats(
         })
         .count();
 
+    let day_used: u64 = accounts
+        .iter()
+        .map(|a| a.day_requests.load(std::sync::atomic::Ordering::Relaxed))
+        .sum();
+
     Ok(Json(json!({
         "total_requests": total_requests,
         "total_errors": total_errors,
@@ -38,6 +43,8 @@ pub async fn get_stats(
         "total_accounts": accounts.len(),
         "active_accounts": active_count,
         "rate_limited_accounts": rate_limited_count,
-        "healthy_accounts": active_count.saturating_sub(rate_limited_count)
+        "healthy_accounts": active_count.saturating_sub(rate_limited_count),
+        "conservation": state.anti_ban.in_conservation(),
+        "day_requests": day_used,
     })))
 }

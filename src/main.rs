@@ -90,11 +90,23 @@ async fn main() {
     let http_client = Arc::new(proxy_manager.client());
 
     let switching_weights = SwitchingWeights::default();
-    let account_manager = Arc::new(AccountManager::new(db.clone(), switching_weights));
+    // RateLimitSettings is built before the manager so selection policy
+    // (daily budgets) is available from the first request.
+    let rate_limits = Arc::new(rate_limit::RateLimitSettings::from_env());
+    if let Some(db) = &db {
+        rate_limits.load_from_db(db).await;
+    }
+
+    let account_manager = Arc::new(AccountManager::new(
+        db.clone(),
+        switching_weights,
+        rate_limits.clone(),
+    ));
 
     if let Err(e) = account_manager.load_from_db().await {
         tracing::warn!("Could not load accounts from DB: {}", e);
     }
+    account_manager.load_daily_usage().await;
 
     if account_manager.account_count().await == 0 {
         let env_client_id = std::env::var("CLIENT_ID").unwrap_or_default();
@@ -147,15 +159,11 @@ async fn main() {
         tracing::warn!("Could not load API keys from DB: {}", e);
     }
 
-    let rate_limits = Arc::new(rate_limit::RateLimitSettings::from_env());
-    if let Some(db) = &db {
-        rate_limits.load_from_db(db).await;
-    }
-
     let anti_ban = Arc::new(anti_ban::AntiBan::new(rate_limits.clone()));
 
     // Periodically rebuild the per-IP limiter so stale IP buckets are dropped
     // (bounds memory) and no IP is throttled forever by past activity.
+    // Also evicts stale reputation entries.
     {
         let ab = anti_ban.clone();
         tokio::spawn(async move {
@@ -163,6 +171,19 @@ async fn main() {
             loop {
                 interval.tick().await;
                 ab.reload_limiter();
+                ab.evict_reputation(3600);
+            }
+        });
+    }
+
+    // Flush per-account daily usage to the DB every minute.
+    {
+        let am = account_manager.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                am.flush_daily_usage().await;
             }
         });
     }
@@ -210,6 +231,39 @@ async fn main() {
         notifier.clone(),
     )
     .await;
+
+    // Pool watcher (30s): rescale Tidal quotas to the live healthy count and
+    // flip conservation mode, alerting on transitions.
+    {
+        let ab = state.anti_ban.clone();
+        let am = state.account_manager.clone();
+        let nt = state.notifier.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let (healthy, total) = am.healthy_count().await;
+                let active = am.active_count().await;
+                match ab.refresh_for_pool(healthy, active) {
+                    Some(crate::anti_ban::PoolTransition::EnteredConservation) => {
+                        tracing::warn!(
+                            "Conservation mode ON ({} healthy of {} active) — shedding load to protect the reserve",
+                            healthy, active
+                        );
+                        nt.alert_conservation(true, healthy, total).await;
+                    }
+                    Some(crate::anti_ban::PoolTransition::ExitedConservation) => {
+                        tracing::info!(
+                            "Conservation mode OFF ({} healthy) — normal limits restored",
+                            healthy
+                        );
+                        nt.alert_conservation(false, healthy, total).await;
+                    }
+                    None => {}
+                }
+            }
+        });
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

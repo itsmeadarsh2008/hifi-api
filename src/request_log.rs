@@ -183,19 +183,24 @@ pub async fn log_requests(
     let raw_path = req.uri().path().to_string();
     let path = normalize_path(&raw_path);
     let detail = extract_detail(&raw_path, req.uri().query());
-    let ip = ip_limiter::client_ip(&state, &req, addr).to_string();
+    let junk = ip_limiter::is_junk_search(&raw_path, req.uri().query());
+    let ip = ip_limiter::client_ip(&state, &req, addr);
     let start = Instant::now();
 
     let resp = next.run(req).await;
+    let status = resp.status().as_u16();
+
+    // Feed the completed outcome back into IP reputation.
+    state.anti_ban.note_outcome(ip, status, junk);
 
     state.request_log.record(LogEntry {
         ts: chrono::Utc::now().timestamp(),
         method,
         path,
         detail,
-        status: resp.status().as_u16(),
+        status,
         latency_ms: start.elapsed().as_millis() as u64,
-        client_ip: ip,
+        client_ip: ip.to_string(),
     });
 
     resp

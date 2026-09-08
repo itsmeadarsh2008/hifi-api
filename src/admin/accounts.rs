@@ -30,30 +30,29 @@ pub async fn list_accounts(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, AppError> {
     let accounts = state.account_manager.list_accounts().await;
-    let list: Vec<Value> = accounts
-        .iter()
-        .map(|a| {
-            json!({
-                "id": a.id,
-                "label": a.label,
-                "client_id": a.client_id,
-                "client_secret": a.client_secret,
-                "refresh_token": a.refresh_token,
-                "user_id": futures::executor::block_on(async { a.user_id.read().await.clone() }),
-                "is_active": a.is_active.load(std::sync::atomic::Ordering::Relaxed),
-                "auto_disabled": a.auto_disabled.load(std::sync::atomic::Ordering::Relaxed),
-                "heal_failures": a.heal_failures.load(std::sync::atomic::Ordering::Relaxed),
-                "heal_next_retry": a.heal_next_retry.load(std::sync::atomic::Ordering::Relaxed),
-                "request_count": a.request_count.load(std::sync::atomic::Ordering::Relaxed),
-                "error_count": a.error_count.load(std::sync::atomic::Ordering::Relaxed),
-                "rate_limit_hits": a.rate_limit_hits.load(std::sync::atomic::Ordering::Relaxed),
-                "rate_limited_until": a.rate_limited_until.load(std::sync::atomic::Ordering::Relaxed),
-                "token_expires_at": a.token_expires_at.load(std::sync::atomic::Ordering::Relaxed),
-                "last_used": a.last_used.load(std::sync::atomic::Ordering::Relaxed),
-                "notes": futures::executor::block_on(async { a.notes.read().await.clone() }),
-            })
-        })
-        .collect();
+    let mut list: Vec<Value> = Vec::with_capacity(accounts.len());
+    for a in &accounts {
+        list.push(json!({
+            "id": a.id,
+            "label": a.label,
+            "client_id": a.client_id,
+            "client_secret": a.client_secret,
+            "refresh_token": a.refresh_token,
+            "user_id": a.user_id.read().await.clone(),
+            "is_active": a.is_active.load(std::sync::atomic::Ordering::Relaxed),
+            "auto_disabled": a.auto_disabled.load(std::sync::atomic::Ordering::Relaxed),
+            "heal_failures": a.heal_failures.load(std::sync::atomic::Ordering::Relaxed),
+            "heal_next_retry": a.heal_next_retry.load(std::sync::atomic::Ordering::Relaxed),
+            "request_count": a.request_count.load(std::sync::atomic::Ordering::Relaxed),
+            "error_count": a.error_count.load(std::sync::atomic::Ordering::Relaxed),
+            "rate_limit_hits": a.rate_limit_hits.load(std::sync::atomic::Ordering::Relaxed),
+            "rate_limited_until": a.rate_limited_until.load(std::sync::atomic::Ordering::Relaxed),
+            "token_expires_at": a.token_expires_at.load(std::sync::atomic::Ordering::Relaxed),
+            "last_used": a.last_used.load(std::sync::atomic::Ordering::Relaxed),
+            "day_requests": a.day_requests.load(std::sync::atomic::Ordering::Relaxed),
+            "notes": a.notes.read().await.clone(),
+        }));
+    }
 
     Ok(Json(json!({ "accounts": list })))
 }
