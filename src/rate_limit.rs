@@ -1,9 +1,11 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
+
+use crate::upstash::UpstashStore;
 
 pub struct RateLimitSettings {
     pub ip_rps: AtomicU64,
@@ -39,6 +41,8 @@ pub struct RateLimitSettings {
     // --- Atmos ---
     /// off | prefer — query param `atmos=` overrides per request.
     pub atmos_mode: RwLock<String>,
+    /// Shared cross-instance state (None = single-host mode, skip sync).
+    upstash: OnceLock<std::sync::Arc<UpstashStore>>,
 }
 
 impl RateLimitSettings {
@@ -64,7 +68,19 @@ impl RateLimitSettings {
             ip_allowlist: RwLock::new(parse_ip_list(&std::env::var("IP_ALLOWLIST").unwrap_or_default())),
             ip_denylist: RwLock::new(parse_ip_list(&std::env::var("IP_DENYLIST").unwrap_or_default())),
             atmos_mode: RwLock::new(default_atmos_mode()),
+            upstash: OnceLock::new(),
         }
+    }
+
+    /// Attach shared state once at startup (before serving).
+    pub fn set_upstash(&self, store: Option<std::sync::Arc<UpstashStore>>) {
+        if let Some(s) = store {
+            let _ = self.upstash.set(s);
+        }
+    }
+
+    fn upstash(&self) -> Option<std::sync::Arc<UpstashStore>> {
+        self.upstash.get().cloned()
     }
 
     pub fn snapshot(&self) -> Value {
@@ -173,9 +189,16 @@ impl RateLimitSettings {
             }
         };
         for (key, value) in rows {
-            let v_u64 = value.parse::<u64>().ok();
-            let v_i64 = value.parse::<i64>().ok();
-            match key.as_str() {
+            self.apply_kv(&key, &value);
+        }
+    }
+
+    /// Apply one persisted setting. Shared by the SQLite and Redis loaders
+    /// so both sources have identical semantics (including clamps).
+    fn apply_kv(&self, key: &str, value: &str) {
+        let v_u64 = value.parse::<u64>().ok();
+        let v_i64 = value.parse::<i64>().ok();
+        match key {
                 "ip_rps" | "global_rps" => {
                     if let Some(v) = v_u64 {
                         self.ip_rps.store(v, Ordering::Relaxed);
@@ -282,11 +305,35 @@ impl RateLimitSettings {
                 }
                 _ => {}
             }
-        }
     }
 
-    pub async fn save_to_db(&self, db: &SqlitePool) {
-        let entries = [
+    /// Setting names mirrored to Redis (same keys as the SQLite table).
+    const REDIS_SETTING_NAMES: &'static [&'static str] = &[
+        "ip_rps",
+        "ip_burst",
+        "tidal_rps",
+        "tidal_burst",
+        "cooldown_429_secs",
+        "cooldown_403_secs",
+        "auto_heal",
+        "ip_allowlist",
+        "ip_denylist",
+        "atmos_mode",
+        "account_rps",
+        "account_burst",
+        "reserve_accounts",
+        "conserve_trickle_rps",
+        "daily_budget_per_account",
+        "daily_budget_alert_pct",
+        "ip_costly_rps",
+        "ip_costly_burst",
+        "ip_delay_cap_ms",
+        "reputation_enabled",
+    ];
+
+    /// Canonical (key, value) snapshot, shared by the SQLite and Redis writers.
+    fn settings_entries(&self) -> Vec<(String, String)> {
+        vec![
             ("ip_rps", self.ip_rps.load(Ordering::Relaxed).to_string()),
             ("ip_burst", self.ip_burst.load(Ordering::Relaxed).to_string()),
             ("tidal_rps", self.tidal_rps.load(Ordering::Relaxed).to_string()),
@@ -307,7 +354,14 @@ impl RateLimitSettings {
             ("ip_costly_burst", self.ip_costly_burst.load(Ordering::Relaxed).to_string()),
             ("ip_delay_cap_ms", self.ip_delay_cap_ms.load(Ordering::Relaxed).to_string()),
             ("reputation_enabled", self.reputation_enabled.load(Ordering::Relaxed).to_string()),
-        ];
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+    }
+
+    pub async fn save_to_db(&self, db: &SqlitePool) {
+        let entries = self.settings_entries();
         for (key, value) in entries {
             let _ = sqlx::query(
                 "INSERT INTO settings (key, value) VALUES (?, ?)
@@ -318,6 +372,92 @@ impl RateLimitSettings {
             .execute(db)
             .await;
         }
+    }
+
+    /// Write-through of all settings to Redis (best-effort, no-op when
+    /// sync is disabled). Called after admin updates and restores so every
+    /// instance converges on the same values.
+    pub async fn save_to_redis(&self) {
+        let store = match self.upstash() {
+            Some(s) => s,
+            None => return,
+        };
+        for (key, value) in self.settings_entries() {
+            store.set(&UpstashStore::k_settings(&key), &value, None).await;
+        }
+        tracing::debug!("Synced {} settings to Redis", Self::REDIS_SETTING_NAMES.len());
+    }
+
+    /// Load shared settings into memory. Returns the number of keys applied
+    /// (0 when Redis is empty/unreachable — caller falls back to DB/env).
+    pub async fn load_from_redis(&self) -> usize {
+        let store = match self.upstash() {
+            Some(s) => s,
+            None => return 0,
+        };
+        let keys: Vec<String> =
+            Self::REDIS_SETTING_NAMES.iter().map(|n| UpstashStore::k_settings(n)).collect();
+        let values = store.mget(&keys).await;
+        let mut applied = 0;
+        for (name, value) in Self::REDIS_SETTING_NAMES.iter().zip(values.iter()) {
+            if let Some(v) = value {
+                self.apply_kv(name, v);
+                applied += 1;
+            }
+        }
+        if applied > 0 {
+            tracing::info!("Loaded {} settings from Redis", applied);
+        }
+        applied
+    }
+
+    /// First-boot convergence: when Redis holds no settings, seed it from
+    /// this host (first writer wins via NX across the fleet), then load.
+    /// Later boots simply load what the fleet agreed on.
+    pub async fn seed_and_load(&self) {
+        let store = match self.upstash() {
+            Some(s) => s,
+            None => return,
+        };
+        if self.load_from_redis().await > 0 {
+            return;
+        }
+        let mut seeded = 0;
+        for (key, value) in self.settings_entries() {
+            if store.set_nx(&UpstashStore::k_settings(&key), &value, None).await {
+                seeded += 1;
+            }
+        }
+        // Another host may have won some keys; converge on the merged result.
+        let applied = self.load_from_redis().await;
+        tracing::info!("Seeded {} settings to Redis, converged on {}", seeded, applied);
+    }
+
+    /// Periodic pull for the 30s tick. Applies whatever Redis holds and
+    /// reports whether a value feeding a rebuilt limiter changed, so the
+    /// caller knows to reload limiters (tidal/account quotas rebuild
+    /// automatically on the next pool tick).
+    pub async fn refresh_from_redis(&self) -> bool {
+        let before = (
+            self.ip_rps.load(Ordering::Relaxed),
+            self.ip_burst.load(Ordering::Relaxed),
+            self.ip_costly_rps.load(Ordering::Relaxed),
+            self.ip_costly_burst.load(Ordering::Relaxed),
+            self.ip_delay_cap_ms.load(Ordering::Relaxed),
+            self.conserve_trickle_rps.load(Ordering::Relaxed),
+        );
+        if self.load_from_redis().await == 0 {
+            return false;
+        }
+        let after = (
+            self.ip_rps.load(Ordering::Relaxed),
+            self.ip_burst.load(Ordering::Relaxed),
+            self.ip_costly_rps.load(Ordering::Relaxed),
+            self.ip_costly_burst.load(Ordering::Relaxed),
+            self.ip_delay_cap_ms.load(Ordering::Relaxed),
+            self.conserve_trickle_rps.load(Ordering::Relaxed),
+        );
+        before != after
     }
 }
 

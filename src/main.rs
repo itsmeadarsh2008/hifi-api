@@ -16,6 +16,7 @@ mod routes;
 mod setup;
 mod tidal_client;
 mod token_manager;
+mod upstash;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -34,6 +35,7 @@ use crate::account_manager::{AccountManager, SwitchingWeights};
 use crate::api_keys::ApiKeyManager;
 use crate::config::Config;
 use crate::token_manager::TokenManager;
+use crate::upstash::UpstashStore;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -50,6 +52,8 @@ pub struct AppState {
     pub request_log: Arc<request_log::RequestLog>,
     pub db: Option<sqlx::SqlitePool>,
     pub setup_sessions: admin::setup::Sessions,
+    /// Shared cross-instance state (None = single-host mode, skip sync).
+    pub upstash: Option<Arc<UpstashStore>>,
 }
 
 #[tokio::main]
@@ -97,6 +101,21 @@ async fn main() {
         rate_limits.load_from_db(db).await;
     }
 
+    // Shared cross-instance state (Upstash Redis). Absent unless both env
+    // vars are set — everything below degrades to single-host behavior.
+    let upstash = UpstashStore::from_env();
+    if let Some(store) = &upstash {
+        if store.ping().await {
+            tracing::info!("Upstash Redis sync enabled");
+        } else {
+            tracing::warn!("Upstash Redis unreachable at startup — running degraded (local-only) until it recovers");
+        }
+        // Fleet convergence: seed-if-empty, then adopt the shared values.
+        // (Local DB/env already loaded above as the fallback/seed source.)
+        rate_limits.set_upstash(Some(store.clone()));
+        rate_limits.seed_and_load().await;
+    }
+
     let account_manager = Arc::new(AccountManager::new(
         db.clone(),
         switching_weights,
@@ -107,6 +126,10 @@ async fn main() {
         tracing::warn!("Could not load accounts from DB: {}", e);
     }
     account_manager.load_daily_usage().await;
+    account_manager.set_upstash(upstash.clone());
+    // Converge budgets/parks with the fleet (SQLite only has this host).
+    account_manager.sync_usage_with_redis().await;
+    account_manager.merge_remote_cooldowns().await;
 
     if account_manager.account_count().await == 0 {
         let env_client_id = std::env::var("CLIENT_ID").unwrap_or_default();
@@ -153,13 +176,17 @@ async fn main() {
 
     let token_manager = Arc::new(TokenManager::new(db.clone()));
     token_manager.set_account_manager(account_manager.clone());
+    token_manager.set_upstash(upstash.clone());
 
     let api_keys = Arc::new(ApiKeyManager::new(db.clone()));
+    api_keys.set_upstash(upstash.clone());
     if let Err(e) = api_keys.load_from_db().await {
         tracing::warn!("Could not load API keys from DB: {}", e);
     }
+    api_keys.sync_usage_from_redis().await;
 
     let anti_ban = Arc::new(anti_ban::AntiBan::new(rate_limits.clone()));
+    anti_ban.set_upstash(upstash.clone());
 
     // Periodically rebuild the per-IP limiter so stale IP buckets are dropped
     // (bounds memory) and no IP is throttled forever by past activity.
@@ -176,14 +203,18 @@ async fn main() {
         });
     }
 
-    // Flush per-account daily usage to the DB every minute.
+    // Flush per-account daily usage to the DB every minute, and reconcile
+    // the fleet-wide counters/quotas from Redis.
     {
         let am = account_manager.clone();
+        let ak = api_keys.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
                 am.flush_daily_usage().await;
+                am.sync_usage_with_redis().await;
+                ak.sync_usage_from_redis().await;
             }
         });
     }
@@ -214,6 +245,7 @@ async fn main() {
         request_log: Arc::new(request_log::RequestLog::new()),
         db,
         setup_sessions: admin::setup::new_session_store(),
+        upstash: upstash.clone(),
     };
 
     // Start token pre-warming background task
@@ -232,16 +264,23 @@ async fn main() {
     )
     .await;
 
-    // Pool watcher (30s): rescale Tidal quotas to the live healthy count and
-    // flip conservation mode, alerting on transitions.
+    // Pool watcher (30s): adopt shared settings, merge sibling parks,
+    // rescale Tidal quotas to the live healthy count and flip conservation
+    // mode, alerting on transitions.
     {
         let ab = state.anti_ban.clone();
         let am = state.account_manager.clone();
         let nt = state.notifier.clone();
+        let rl = state.rate_limits.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             loop {
                 interval.tick().await;
+                // Shared settings first so the rescale below uses fresh values.
+                if rl.refresh_from_redis().await {
+                    ab.reload_limiter();
+                }
+                am.merge_remote_cooldowns().await;
                 let (healthy, total) = am.healthy_count().await;
                 let active = am.active_count().await;
                 match ab.refresh_for_pool(healthy, active) {

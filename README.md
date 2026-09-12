@@ -95,6 +95,7 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `ATMOS_MODE` | `prefer` | Default Atmos preference for manifests/dash: `prefer` (EAC3_JOC first) or `off` (FLAC first); `?atmos=` overrides per request |
 | `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
 | `DISCORD_WEBHOOK_URL` | (none) | Discord webhook for 403/all-down alerts (empty = disabled, test in panel) |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | (none) | Shared cross-instance state via Upstash Redis (empty = single-host mode). See [Multi-instance sync](#multi-instance-sync) |
 | `RUST_LOG` | `info` | Log level |
 
 ## Deployment
@@ -169,6 +170,21 @@ Three layers, cheapest check first:
 Capacity math: with 7 accounts × 12000 reqs/day you have ~84k Tidal calls/day (~150/user/day across 545 users). Averages are trivial — size for *peak concurrency*, and let the daily budgets absorb it.
 
 Identical concurrent requests (e.g. ten users hitting the same search) are coalesced into one upstream call.
+
+### Multi-instance sync
+
+Running more than one instance (e.g. several Render hosts sharing the load)? Set `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (Upstash Redis REST credentials, as host secrets — never commit them) identically on **all** instances. They then coordinate through one Redis database instead of drifting apart:
+
+| Synced | How |
+|---|---|
+| Rate-limit settings | Write-through on admin save/restore; first boot seeds Redis when empty (first writer wins), later boots adopt the shared values; re-pulled every 30s |
+| Per-account daily budgets | Fire-and-forget `INCR` per call, reconciled into the local enforcement counter every 60s (overshoot bounded by one interval) |
+| 429/403 cooldown parks | Broadcast on park, merged fleet-wide every 30s (one host's ban protects all hosts); cleared by Emergency → Clear Limits |
+| Tidal access tokens | Shared on refresh, reused on miss (no cross-host refresh stampedes) |
+| API-key usage quotas | Same INCR + 60s reconcile pattern as daily budgets |
+| Global upstream throttle | Shared fixed 1s window at the `TIDAL_RPS` ceiling (local per-host governor still shapes traffic) |
+
+Without these vars everything stays local (today's single-host behavior). All Redis calls are fail-open with short timeouts: if Redis is unreachable the instance keeps serving from local state. Intentionally **not** synced: account credentials (stay in per-host SQLite), the metadata response cache (per-host L1), IP reputation, request log, proxy state.
 
 ### Preview-only tracks
 

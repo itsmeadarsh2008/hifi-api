@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use chrono::Utc;
 use rand::Rng;
@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::rate_limit::RateLimitSettings;
+use crate::upstash::UpstashStore;
 
 #[derive(Clone, Debug)]
 pub struct SwitchingWeights {
@@ -134,6 +135,8 @@ pub struct AccountManager {
     weights: SwitchingWeights,
     settings: Arc<RateLimitSettings>,
     db: Option<SqlitePool>,
+    /// Shared cross-instance state (None = single-host mode, skip sync).
+    upstash: OnceLock<Arc<UpstashStore>>,
 }
 
 impl AccountManager {
@@ -147,7 +150,19 @@ impl AccountManager {
             weights,
             settings,
             db,
+            upstash: OnceLock::new(),
         }
+    }
+
+    /// Attach shared state once at startup (before serving).
+    pub fn set_upstash(&self, store: Option<Arc<UpstashStore>>) {
+        if let Some(s) = store {
+            let _ = self.upstash.set(s);
+        }
+    }
+
+    fn upstash(&self) -> Option<Arc<UpstashStore>> {
+        self.upstash.get().cloned()
     }
 
     pub async fn load_from_db(&self) -> Result<(), AppError> {
@@ -215,6 +230,9 @@ impl AccountManager {
         self.accounts.write().await.clear();
         self.load_from_db().await?;
         self.load_daily_usage().await;
+        // Converge with the fleet (backup restores only touch SQLite).
+        self.sync_usage_with_redis().await;
+        self.merge_remote_cooldowns().await;
         Ok(())
     }
 
@@ -448,7 +466,92 @@ impl AccountManager {
             best.day_requests.store(0, Ordering::Relaxed);
         }
         best.day_requests.fetch_add(1, Ordering::Relaxed);
+        // Global budget accounting: count this call in Redis without blocking
+        // the request path (fire-and-forget). The 60s reconcile folds the
+        // fleet-wide total back into the local enforcement counter.
+        if let Some(store) = self.upstash() {
+            let key = UpstashStore::k_usage(today, &best.id);
+            tokio::spawn(async move {
+                // Single round trip: INCR + self-cleaning expiry.
+                let _ = store.incr_expire(&key, 172_800).await;
+            });
+        }
         Ok(best.clone())
+    }
+
+    /// Pull the fleet-wide daily totals from Redis and raise the local
+    /// enforcement counters to at least the global value. Called at startup
+    /// (after the SQLite load) and on the 60s flush tick, so per-account
+    /// daily budgets are enforced fleet-wide within ~a minute. Overshoot is
+    /// bounded by one reconcile interval — acceptable next to a 12k budget.
+    pub async fn sync_usage_with_redis(&self) {
+        let store = match self.upstash() {
+            Some(s) => s,
+            None => return,
+        };
+        let today = utc_day(Utc::now().timestamp());
+        let ids: Vec<String> = {
+            let accounts = self.accounts.read().await;
+            accounts.iter().map(|a| a.id.clone()).collect()
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let keys: Vec<String> =
+            ids.iter().map(|id| UpstashStore::k_usage(today, id)).collect();
+        let values = store.mget(&keys).await;
+        let accounts = self.accounts.read().await;
+        for (id, remote) in ids.iter().zip(values.iter()) {
+            let count = match remote {
+                Some(v) => v.parse::<i64>().unwrap_or(0).max(0) as u64,
+                None => continue,
+            };
+            if let Some(a) = accounts.iter().find(|a| &a.id == id) {
+                if a.day_start.load(Ordering::Relaxed) != today {
+                    a.day_start.store(today, Ordering::Relaxed);
+                    a.day_requests.store(0, Ordering::Relaxed);
+                }
+                // Only ever raise: Redis holds the fleet sum, which includes
+                // this host's own fire-and-forget increments.
+                let _ = a.day_requests.fetch_max(count, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Pull 429/403 parks broadcast by sibling instances and apply any that
+    /// extend the local cooldown. Called at startup and on the 30s pool
+    /// tick, so one host's park protects the account fleet-wide within ~30s
+    /// instead of every host discovering the ban independently.
+    pub async fn merge_remote_cooldowns(&self) {
+        let store = match self.upstash() {
+            Some(s) => s,
+            None => return,
+        };
+        let ids: Vec<String> = {
+            let accounts = self.accounts.read().await;
+            accounts.iter().map(|a| a.id.clone()).collect()
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let keys: Vec<String> =
+            ids.iter().map(|id| UpstashStore::k_cooldown(id)).collect();
+        let values = store.mget(&keys).await;
+        let accounts = self.accounts.read().await;
+        let now = Utc::now().timestamp();
+        for (id, remote) in ids.iter().zip(values.iter()) {
+            let until = match remote {
+                Some(v) => v.parse::<i64>().unwrap_or(0),
+                None => continue,
+            };
+            if until <= now {
+                continue;
+            }
+            if let Some(a) = accounts.iter().find(|a| &a.id == id) {
+                let _ = a.rate_limited_until.fetch_max(until, Ordering::Relaxed);
+                a.rate_limit_hits.fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 
     pub async fn select_account(&self) -> Result<Arc<AccountState>, AppError> {
@@ -487,6 +590,12 @@ impl AccountManager {
                 .bind(id)
                 .execute(db)
                 .await;
+            }
+            // Broadcast the park so sibling instances stop using this
+            // account too (merged by their 30s tick). Best-effort.
+            if let Some(store) = self.upstash() {
+                let ttl = (until - Utc::now().timestamp() + 120).max(60) as u64;
+                store.set(&UpstashStore::k_cooldown(id), &until.to_string(), Some(ttl.min(7200))).await;
             }
         }
     }
@@ -593,9 +702,20 @@ impl AccountManager {
     pub async fn clear_all_rate_limits(&self) -> usize {
         let accounts = self.accounts.read().await;
         let mut cleared = 0;
+        let mut ids = Vec::new();
         for a in accounts.iter() {
             if a.rate_limited_until.swap(0, Ordering::Relaxed) > 0 {
                 cleared += 1;
+            }
+            ids.push(a.id.clone());
+        }
+        drop(accounts);
+        // Clear the broadcast parks too, or the next 30s merge re-parks them.
+        if cleared > 0 {
+            if let Some(store) = self.upstash() {
+                let keys: Vec<String> =
+                    ids.iter().map(|id| UpstashStore::k_cooldown(id)).collect();
+                store.del_many(&keys).await;
             }
         }
         cleared

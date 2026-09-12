@@ -272,6 +272,9 @@ pub async fn restore_backup(
     state.account_manager.reload_from_db().await?;
     state.api_keys.reload_from_db().await?;
     state.rate_limits.load_from_db(db).await;
+    // Publish the restored settings fleet-wide (reload_* above already
+    // merged usage/cooldowns from Redis).
+    state.rate_limits.save_to_redis().await;
     state.anti_ban.reload_limiter();
 
     let (healthy, total) = state.account_manager.healthy_count().await;

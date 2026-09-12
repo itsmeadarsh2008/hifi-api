@@ -25,6 +25,9 @@ pub async fn update_settings(
     if let Some(db) = &state.db {
         state.rate_limits.save_to_db(db).await;
     }
+    // Publish fleet-wide so sibling instances adopt the change on their
+    // next 30s tick (their SQLite rows stay as fallback).
+    state.rate_limits.save_to_redis().await;
 
     Ok(Json(json!({
         "message": "Rate limits updated",

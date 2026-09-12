@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     pub database_url: String,
     pub admin_key: String,
@@ -14,6 +14,32 @@ pub struct Config {
     pub max_retries: u32,
     pub discord_webhook_url: String,
     pub api_version: String,
+    /// Upstash Redis REST base URL (empty = multi-host sync disabled).
+    pub upstash_url: String,
+    /// Upstash Redis REST token. Kept in memory only; redacted from Debug.
+    pub upstash_token: String,
+}
+
+// Manual Debug: the REST token must never appear in logs.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("database_url", &self.database_url)
+            .field("admin_key", &"<redacted>")
+            .field("country_code", &self.country_code)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("use_proxies", &self.use_proxies)
+            .field("trust_proxy", &self.trust_proxy)
+            .field("proxies_file", &self.proxies_file)
+            .field("fallback_to_direct", &self.fallback_to_direct)
+            .field("max_retries", &self.max_retries)
+            .field("discord_webhook_url", &self.discord_webhook_url)
+            .field("api_version", &self.api_version)
+            .field("upstash_url", &self.upstash_url)
+            .field("upstash_token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Config {
@@ -47,6 +73,15 @@ impl Config {
             .unwrap_or(2)
             .max(1);
         let discord_webhook_url = std::env::var("DISCORD_WEBHOOK_URL").unwrap_or_default();
+        let upstash_url = std::env::var("UPSTASH_REDIS_REST_URL")
+            .unwrap_or_default()
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        let upstash_token = std::env::var("UPSTASH_REDIS_REST_TOKEN")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         Self {
             database_url,
@@ -61,6 +96,8 @@ impl Config {
             max_retries,
             discord_webhook_url,
             api_version: "2.10".into(),
+            upstash_url,
+            upstash_token,
         }
     }
 }
