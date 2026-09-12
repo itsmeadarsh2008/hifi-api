@@ -77,18 +77,18 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `MAX_RETRIES` | `2` | Retry count on proxy failure |
 | `RATE_LIMIT_RPS` | `20` | Per-IP requests/sec (editable in admin panel) |
 | `RATE_LIMIT_BURST` | `40` | Per-IP burst allowance (editable in admin panel) |
-| `TIDAL_RPS` | `12` | Global upstream Tidal requests/sec with jitter (editable in admin panel) |
-| `TIDAL_BURST` | `24` | Global upstream Tidal burst (editable in admin panel) |
+| `TIDAL_RPS` | `20` | Global upstream Tidal requests/sec with jitter (editable in admin panel) |
+| `TIDAL_BURST` | `40` | Global upstream Tidal burst (editable in admin panel) |
 | `COOLDOWN_429_SECS` | `90` | Account cooldown after a 429 (editable in admin panel) |
 | `COOLDOWN_403_SECS` | `180` | Account cooldown after a 403 (editable in admin panel) |
 | `AUTO_HEAL` | `true` | Retry system-disabled accounts with backoff (never touches manual OFF; editable in admin panel) |
-| `TIDAL_RPS_PER_ACCOUNT` | `2` | Per-account sustained Tidal rps; effective global cap ≈ this × healthy accounts, capped by `TIDAL_RPS` (editable in admin panel) |
-| `TIDAL_BURST_PER_ACCOUNT` | `4` | Per-account burst allowance (editable in admin panel) |
+| `TIDAL_RPS_PER_ACCOUNT` | `3` | Per-account sustained Tidal rps; effective global cap ≈ this × healthy accounts, capped by `TIDAL_RPS` (editable in admin panel) |
+| `TIDAL_BURST_PER_ACCOUNT` | `6` | Per-account burst allowance (editable in admin panel) |
 | `RESERVE_ACCOUNTS` | `2` | Keep at least this many healthy: at/under it the pool conserves (trickle + fail-fast 429s) instead of burning the last accounts (editable in admin panel) |
 | `CONSERVE_TRICKLE_RPS` | `1` | Global Tidal rps while conserving (editable in admin panel) |
-| `DAILY_BUDGET_PER_ACCOUNT` | `6000` | Max Tidal calls per account per UTC day, `0` = unlimited; spent accounts leave rotation until rollover (editable in admin panel) |
+| `DAILY_BUDGET_PER_ACCOUNT` | `12000` | Max Tidal calls per account per UTC day, `0` = unlimited; spent accounts leave rotation until rollover (editable in admin panel) |
 | `DAILY_BUDGET_ALERT_PCT` | `80` | Discord warning when an account crosses this % of its daily budget |
-| `IP_COSTLY_RPS` / `IP_COSTLY_BURST` | `5` / `10` | Stricter per-IP bucket for Tidal-hitting routes only (editable in admin panel) |
+| `IP_COSTLY_RPS` / `IP_COSTLY_BURST` | `20` / `40` | Stricter per-IP bucket for Tidal-hitting routes only (editable in admin panel) |
 | `IP_DELAY_CAP_MS` | `2000` | Max slowdown for soft-over-limit requests before 429 (editable in admin panel) |
 | `REPUTATION_ENABLED` | `true` | Auto-tune per-IP patience from behavior (editable in admin panel) |
 | `IP_ALLOWLIST` / `IP_DENYLIST` | (none) | Comma-separated IPs; allow bypasses limits, deny gets instant 403 (editable in admin panel) |
@@ -166,7 +166,7 @@ Three layers, cheapest check first:
 
 **Reserve guarantee:** at or under `RESERVE_ACCOUNTS` healthy accounts the pool enters **conservation mode** — traffic trickles (`CONSERVE_TRICKLE_RPS`) and excess fails fast with `429 + Retry-After` instead of burning the last accounts. Cooldowns are jittered and fresh recoveries ramp up over 3 minutes so accounts don't all re-enter (and re-ban) simultaneously. Watch for the 🐢 badge in the panel.
 
-Capacity math: with 7 accounts × 6000 reqs/day you have ~42k Tidal calls/day (~140/user/day across 300 users). Averages are trivial — size for *peak concurrency*, and let the daily budgets absorb it.
+Capacity math: with 7 accounts × 12000 reqs/day you have ~84k Tidal calls/day (~150/user/day across 545 users). Averages are trivial — size for *peak concurrency*, and let the daily budgets absorb it.
 
 Identical concurrent requests (e.g. ten users hitting the same search) are coalesced into one upstream call.
 

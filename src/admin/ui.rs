@@ -258,7 +258,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="form-group"><label>Conserve trickle RPS</label><input type="number" id="rl-trickle" min="1" placeholder="1"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>Daily budget / account (0 = ∞)</label><input type="number" id="rl-budget" min="0" placeholder="6000"></div>
+<div class="form-group"><label>Daily budget / account (0 = ∞)</label><input type="number" id="rl-budget" min="0" placeholder="12000"></div>
 <div class="form-group"><label>Budget alert %</label><input type="number" id="rl-budget-pct" min="1" max="100" placeholder="80"></div>
 </div>
 <div class="form-row">
@@ -1160,19 +1160,19 @@ async function loadRateLimits() {
         var r = d.rate_limits || {};
         document.getElementById('rl-rps').value = r.ip_rps != null ? r.ip_rps : (r.global_rps || 20);
         document.getElementById('rl-burst').value = r.ip_burst != null ? r.ip_burst : (r.global_burst || 40);
-        document.getElementById('rl-tidal-rps').value = r.tidal_rps || 12;
-        document.getElementById('rl-tidal-burst').value = r.tidal_burst || 24;
+        document.getElementById('rl-tidal-rps').value = r.tidal_rps || 20;
+        document.getElementById('rl-tidal-burst').value = r.tidal_burst || 40;
         document.getElementById('rl-429').value = r.cooldown_429_secs || 90;
         document.getElementById('rl-403').value = r.cooldown_403_secs || 180;
         document.getElementById('rl-autoheal').checked = r.auto_heal !== false;
-        document.getElementById('rl-account-rps').value = r.account_rps || 2;
-        document.getElementById('rl-account-burst').value = r.account_burst || 4;
+        document.getElementById('rl-account-rps').value = r.account_rps || 3;
+        document.getElementById('rl-account-burst').value = r.account_burst || 6;
         document.getElementById('rl-reserve').value = r.reserve_accounts || 2;
         document.getElementById('rl-trickle').value = r.conserve_trickle_rps || 1;
-        document.getElementById('rl-budget').value = r.daily_budget_per_account != null ? r.daily_budget_per_account : 6000;
+        document.getElementById('rl-budget').value = r.daily_budget_per_account != null ? r.daily_budget_per_account : 12000;
         document.getElementById('rl-budget-pct').value = r.daily_budget_alert_pct || 80;
-        document.getElementById('rl-costly-rps').value = r.ip_costly_rps || 5;
-        document.getElementById('rl-costly-burst').value = r.ip_costly_burst || 10;
+        document.getElementById('rl-costly-rps').value = r.ip_costly_rps || 20;
+        document.getElementById('rl-costly-burst').value = r.ip_costly_burst || 40;
         document.getElementById('rl-delay-cap').value = r.ip_delay_cap_ms != null ? r.ip_delay_cap_ms : 2000;
         document.getElementById('rl-reputation').checked = r.reputation_enabled !== false;
         document.getElementById('rl-allow').value = r.ip_allowlist || '';
@@ -1218,19 +1218,19 @@ async function saveRateLimits() {
         rate_limits: {
             ip_rps: parseInt(document.getElementById('rl-rps').value) || 20,
             ip_burst: parseInt(document.getElementById('rl-burst').value) || 40,
-            tidal_rps: parseInt(document.getElementById('rl-tidal-rps').value) || 12,
-            tidal_burst: parseInt(document.getElementById('rl-tidal-burst').value) || 24,
+            tidal_rps: parseInt(document.getElementById('rl-tidal-rps').value) || 20,
+            tidal_burst: parseInt(document.getElementById('rl-tidal-burst').value) || 40,
             cooldown_429_secs: parseInt(document.getElementById('rl-429').value) || 90,
             cooldown_403_secs: parseInt(document.getElementById('rl-403').value) || 180,
             auto_heal: document.getElementById('rl-autoheal').checked,
-            account_rps: parseInt(document.getElementById('rl-account-rps').value) || 2,
-            account_burst: parseInt(document.getElementById('rl-account-burst').value) || 4,
+            account_rps: parseInt(document.getElementById('rl-account-rps').value) || 3,
+            account_burst: parseInt(document.getElementById('rl-account-burst').value) || 6,
             reserve_accounts: parseInt(document.getElementById('rl-reserve').value) || 2,
             conserve_trickle_rps: parseInt(document.getElementById('rl-trickle').value) || 1,
             daily_budget_per_account: parseInt(document.getElementById('rl-budget').value),
             daily_budget_alert_pct: parseInt(document.getElementById('rl-budget-pct').value) || 80,
-            ip_costly_rps: parseInt(document.getElementById('rl-costly-rps').value) || 5,
-            ip_costly_burst: parseInt(document.getElementById('rl-costly-burst').value) || 10,
+            ip_costly_rps: parseInt(document.getElementById('rl-costly-rps').value) || 20,
+            ip_costly_burst: parseInt(document.getElementById('rl-costly-burst').value) || 40,
             ip_delay_cap_ms: parseInt(document.getElementById('rl-delay-cap').value),
             reputation_enabled: document.getElementById('rl-reputation').checked,
             ip_allowlist: document.getElementById('rl-allow').value,
