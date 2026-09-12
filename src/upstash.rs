@@ -24,10 +24,15 @@
 //! - `hifi:token:<account_id>` — `{"t": access_token, "e": expires_at}`
 //! - `hifi:apikey:<key_id>` — consumed quota units (int)
 //! - `hifi:throttle:<epoch_sec>` — global fixed-window upstream counter
+//! - `hifi:account:<account_id>` — account record JSON (credential backup)
+//! - `hifi:accounts` — SET of known account ids (restore index)
+//! - `hifi:apikeydef:<key_id>` — API-key definition JSON (hash/flags/quota)
+//! - `hifi:apikeys` — SET of known API-key ids (restore index)
 //!
-//! Deliberately NOT synced: account credentials (stay in per-host SQLite —
-//! syncing secrets widens exposure), the metadata response cache (latency;
-//! per-host L1 is fine), IP reputation, request log, proxy state.
+//! Deliberately NOT synced: the metadata response cache (latency; per-host
+//! L1 is fine), IP reputation, request log, proxy pool state (per-host
+//! egress by nature). Everything else — including account credentials and
+//! API-key definitions — is backed up so wiped hosts restore themselves.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -260,6 +265,29 @@ impl UpstashStore {
         let _ = self.pipeline(cmds).await;
     }
 
+    // --- set helpers (membership indexes for restorable collections) ---
+
+    pub async fn sadd(&self, set: &str, member: &str) {
+        let _ = self.cmd(vec!["SADD".into(), set.into(), member.into()]).await;
+    }
+
+    pub async fn srem(&self, set: &str, member: &str) {
+        let _ = self.cmd(vec!["SREM".into(), set.into(), member.into()]).await;
+    }
+
+    pub async fn smembers(&self, set: &str) -> Option<Vec<String>> {
+        let body = self.cmd(vec!["SMEMBERS".into(), set.into()]).await?;
+        match body.get("result")? {
+            Value::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
     // --- key builders (single source of truth for the layout) ---
 
     pub fn k_settings(name: &str) -> String {
@@ -284,6 +312,22 @@ impl UpstashStore {
 
     pub fn k_throttle(epoch_sec: i64) -> String {
         format!("{PREFIX}:throttle:{epoch_sec}")
+    }
+
+    pub fn k_account(account_id: &str) -> String {
+        format!("{PREFIX}:account:{account_id}")
+    }
+
+    pub fn k_accounts_set() -> String {
+        format!("{PREFIX}:accounts")
+    }
+
+    pub fn k_apikeydef(key_id: &str) -> String {
+        format!("{PREFIX}:apikeydef:{key_id}")
+    }
+
+    pub fn k_apikeys_set() -> String {
+        format!("{PREFIX}:apikeys")
     }
 }
 
@@ -321,6 +365,10 @@ mod tests {
         assert_eq!(UpstashStore::k_token("id"), "hifi:token:id");
         assert_eq!(UpstashStore::k_apikey("id"), "hifi:apikey:id");
         assert_eq!(UpstashStore::k_throttle(99), "hifi:throttle:99");
+        assert_eq!(UpstashStore::k_account("id"), "hifi:account:id");
+        assert_eq!(UpstashStore::k_accounts_set(), "hifi:accounts");
+        assert_eq!(UpstashStore::k_apikeydef("id"), "hifi:apikeydef:id");
+        assert_eq!(UpstashStore::k_apikeys_set(), "hifi:apikeys");
     }
 
         #[test]

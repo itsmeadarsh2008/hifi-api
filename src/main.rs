@@ -127,9 +127,11 @@ async fn main() {
     }
     account_manager.load_daily_usage().await;
     account_manager.set_upstash(upstash.clone());
-    // Converge budgets/parks with the fleet (SQLite only has this host).
+    // Converge budgets/parks/credentials with the fleet (SQLite only has
+    // this host — a wiped disk restores its accounts from Redis here).
     account_manager.sync_usage_with_redis().await;
     account_manager.merge_remote_cooldowns().await;
+    account_manager.merge_accounts_from_redis().await;
 
     if account_manager.account_count().await == 0 {
         let env_client_id = std::env::var("CLIENT_ID").unwrap_or_default();
@@ -184,6 +186,7 @@ async fn main() {
         tracing::warn!("Could not load API keys from DB: {}", e);
     }
     api_keys.sync_usage_from_redis().await;
+    api_keys.merge_keys_from_redis().await;
 
     let anti_ban = Arc::new(anti_ban::AntiBan::new(rate_limits.clone()));
     anti_ban.set_upstash(upstash.clone());
@@ -204,7 +207,7 @@ async fn main() {
     }
 
     // Flush per-account daily usage to the DB every minute, and reconcile
-    // the fleet-wide counters/quotas from Redis.
+    // the fleet-wide counters/quotas/rosters from Redis.
     {
         let am = account_manager.clone();
         let ak = api_keys.clone();
@@ -215,6 +218,8 @@ async fn main() {
                 am.flush_daily_usage().await;
                 am.sync_usage_with_redis().await;
                 ak.sync_usage_from_redis().await;
+                am.merge_accounts_from_redis().await;
+                ak.merge_keys_from_redis().await;
             }
         });
     }
