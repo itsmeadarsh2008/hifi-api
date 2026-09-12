@@ -13,6 +13,7 @@ use governor::{Quota, RateLimiter};
 use rand::Rng;
 
 use crate::rate_limit::RateLimitSettings;
+use crate::upstash::UpstashStore;
 
 type IpLimiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
 type TidalLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
@@ -55,6 +56,8 @@ pub struct AntiBan {
     /// Last built (effective_global_rps, account_rps) — rebuild only on change.
     last_built: Mutex<(u64, u64)>,
     settings: Arc<RateLimitSettings>,
+    /// Shared cross-instance state (None = single-host mode, skip sync).
+    upstash: std::sync::OnceLock<Arc<UpstashStore>>,
 }
 
 impl AntiBan {
@@ -69,8 +72,16 @@ impl AntiBan {
             conserved: AtomicBool::new(false),
             last_built: Mutex::new((0, 0)),
             settings,
+            upstash: std::sync::OnceLock::new(),
         };
         this
+    }
+
+    /// Attach shared state once at startup (before serving).
+    pub fn set_upstash(&self, store: Option<Arc<UpstashStore>>) {
+        if let Some(s) = store {
+            let _ = self.upstash.set(s);
+        }
     }
 
     fn quota(rps: u64, burst: u64) -> Quota {
@@ -202,6 +213,40 @@ impl AntiBan {
     pub async fn throttle_tidal(&self) {
         self.tidal_limiter.load().until_ready().await;
         self.apply_jitter().await;
+        // Fleet-wide ceiling: without this, N hosts × local ceiling each
+        // hit Tidal concurrently (e.g. 6 × 20rps). The local governor still
+        // shapes per-host traffic; Redis caps the fleet total.
+        self.throttle_tidal_global().await;
+    }
+
+    /// Shared fixed 1-second window counter. Sleeps to the next window when
+    /// the fleet already spent this second's budget (bounded waits, then
+    /// fail-open). Boundary bursts up to ~2× are possible with fixed
+    /// windows — acceptable next to the per-host governor shaping.
+    async fn throttle_tidal_global(&self) {
+        let store = match self.upstash.get() {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let ceiling = self.settings.tidal_rps.load(Ordering::Relaxed).max(1) as i64;
+        for _ in 0..4 {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let key = UpstashStore::k_throttle(now_ms / 1000);
+            match store.incr_expire(&key, 3).await {
+                Some(n) if n <= ceiling => return,
+                Some(_) => {
+                    // Over budget: wait out this window (+small desync jitter).
+                    let wait_ms = (1000 - (now_ms % 1000)).max(1) as u64
+                        + rand::thread_rng().gen_range(0..50);
+                    tokio::time::sleep(Duration::from_millis(wait_ms.min(1500))).await;
+                }
+                // Redis unreachable: fail open, local limiter still applies.
+                None => return,
+            }
+        }
     }
 
     // --- reputation ---

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -11,6 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::account_manager::{AccountManager, AccountState};
 use crate::error::AppError;
+use crate::upstash::UpstashStore;
 
 pub struct TokenManager {
     db: Option<SqlitePool>,
@@ -18,6 +20,8 @@ pub struct TokenManager {
     token_cache: Cache<String, (String, i64)>,
     refresh_lock: Mutex<String>,
     account_manager: OnceLock<Arc<AccountManager>>,
+    /// Shared cross-instance state (None = single-host mode, skip sync).
+    upstash: OnceLock<Arc<UpstashStore>>,
 }
 
 impl TokenManager {
@@ -30,11 +34,50 @@ impl TokenManager {
                 .build(),
             refresh_lock: Mutex::new(String::new()),
             account_manager: OnceLock::new(),
+            upstash: OnceLock::new(),
         }
     }
 
     pub fn set_account_manager(&self, am: Arc<AccountManager>) {
         let _ = self.account_manager.set(am);
+    }
+
+    /// Attach shared state once at startup (before serving).
+    pub fn set_upstash(&self, store: Option<Arc<UpstashStore>>) {
+        if let Some(s) = store {
+            let _ = self.upstash.set(s);
+        }
+    }
+
+    /// A token freshly minted by a sibling instance, if still valid.
+    async fn shared_token(&self, account: &AccountState) -> Option<String> {
+        let store = self.upstash.get()?;
+        let raw = store.get(&UpstashStore::k_token(&account.id)).await?;
+        let v: Value = serde_json::from_str(&raw).ok()?;
+        let token = v.get("t")?.as_str()?;
+        let expires = v.get("e")?.as_i64()?;
+        if token.is_empty() || Utc::now().timestamp() >= expires - 60 {
+            return None;
+        }
+        *account.access_token.write().await = Some(token.to_string());
+        account.token_expires_at.store(expires, Ordering::Relaxed);
+        Some(token.to_string())
+    }
+
+    fn share_token(&self, account: &AccountState, token: &str, expires_at: i64, expires_in: i64) {
+        let store = match self.upstash.get() {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let payload =
+            serde_json::json!({"t": token, "e": expires_at}).to_string();
+        let key = UpstashStore::k_token(&account.id);
+        let ttl = expires_in.max(120) as u64;
+        // Fire-and-forget: the local token is already usable; siblings will
+        // pick this up on their next miss (or keep using their own).
+        tokio::spawn(async move {
+            store.set(&key, &payload, Some(ttl)).await;
+        });
     }
 
     pub async fn get_token(
@@ -70,6 +113,13 @@ impl TokenManager {
                     return Ok(token.clone());
                 }
             }
+        }
+
+        // A sibling instance may have minted a fresh token already — reuse
+        // it instead of spending another Tidal refresh (also avoids
+        // concurrent-refresh storms across the fleet).
+        if let Some(token) = self.shared_token(account).await {
+            return Ok(token);
         }
 
         let res = http_client
@@ -126,7 +176,8 @@ impl TokenManager {
         *account.access_token.write().await = Some(new_token.clone());
         account
             .token_expires_at
-            .store(expires_at, std::sync::atomic::Ordering::Relaxed);
+            .store(expires_at, Ordering::Relaxed);
+        self.share_token(account, &new_token, expires_at, expires_in);
 
         if let Some(db) = &self.db {
             let now = Utc::now().timestamp();

@@ -414,6 +414,17 @@ function timeStr(ts) {
     return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
 }
 
+function redisCard(redis) {
+    redis = redis || {};
+    if (!redis.configured) {
+        return '<div class="stat-card"><div class="label">Redis Sync</div><div class="value" style="font-size:18px;color:#8b949e">Single-host</div></div>';
+    }
+    if (redis.status === 'ok') {
+        return '<div class="stat-card" style="border-color:#3fb950"><div class="label">Redis Sync</div><div class="value" style="color:#3fb950;font-size:18px">SYNCED</div></div>';
+    }
+    return '<div class="stat-card" style="border-color:#f85149"><div class="label">Redis Sync</div><div class="value" style="color:#f85149;font-size:18px">DOWN</div></div>';
+}
+
 var _testResults = {};
 var _testCacheTs = 0;
 
@@ -667,6 +678,7 @@ async function fetchData() {
             '<div class="stat-card"><div class="label">Active</div><div class="value">' + (stats.healthy_accounts || 0) + '/' + (stats.total_accounts || 0) + '</div></div>' +
             '<div class="stat-card"><div class="label">Rate Limited</div><div class="value">' + (stats.rate_limited_accounts || 0) + '</div></div>' +
             '<div class="stat-card"><div class="label">Today (all accounts)</div><div class="value">' + (stats.day_requests || 0) + '</div></div>' +
+            redisCard(stats.redis) +
             (stats.conservation ? '<div class="stat-card" style="border-color:#d29922"><div class="label">Mode</div><div class="value" style="color:#d29922;font-size:18px">🐢 CONSERVING</div></div>' : '');
 
         var html = '';

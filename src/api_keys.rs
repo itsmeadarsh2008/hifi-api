@@ -15,6 +15,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::upstash::UpstashStore;
 use crate::AppState;
 
 pub struct ApiKeyState {
@@ -51,6 +52,8 @@ fn generate_key() -> String {
 pub struct ApiKeyManager {
     keys: RwLock<Vec<Arc<ApiKeyState>>>,
     db: Option<SqlitePool>,
+    /// Shared cross-instance state (None = single-host mode, skip sync).
+    upstash: std::sync::OnceLock<Arc<UpstashStore>>,
 }
 
 impl ApiKeyManager {
@@ -58,6 +61,14 @@ impl ApiKeyManager {
         Self {
             keys: RwLock::new(Vec::new()),
             db,
+            upstash: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Attach shared state once at startup (before serving).
+    pub fn set_upstash(&self, store: Option<Arc<UpstashStore>>) {
+        if let Some(s) = store {
+            let _ = self.upstash.set(s);
         }
     }
 
@@ -122,7 +133,10 @@ impl ApiKeyManager {
     /// Drop all in-memory state and reload from the database (used after restore).
     pub async fn reload_from_db(&self) -> Result<(), AppError> {
         self.keys.write().await.clear();
-        self.load_from_db().await
+        self.load_from_db().await?;
+        // Converge with the fleet (backup restores only touch SQLite).
+        self.sync_usage_from_redis().await;
+        Ok(())
     }
 
     pub async fn list(&self) -> Vec<Arc<ApiKeyState>> {
@@ -236,7 +250,47 @@ impl ApiKeyManager {
                     .execute(db)
                     .await;
             }
+            // Fleet-wide quota accounting without blocking the request.
+            if let Some(store) = self.upstash.get().cloned() {
+                let redis_key = UpstashStore::k_apikey(&key.id);
+                tokio::spawn(async move {
+                    let _ = store.incrby(&redis_key, 1).await;
+                });
+            }
         }
         Ok(key.label.clone())
+    }
+
+    /// Pull fleet-wide consumed-quota totals and raise local counters to at
+    /// least the global value, so quotas are enforced across instances
+    /// within ~a reconcile interval. Called on the 60s tick and reloads.
+    pub async fn sync_usage_from_redis(&self) {
+        let store = match self.upstash.get() {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let ids: Vec<(String, u64)> = {
+            let keys = self.keys.read().await;
+            keys.iter()
+                .filter(|k| k.quota.load(Ordering::Relaxed) > 0)
+                .map(|k| (k.id.clone(), k.used.load(Ordering::Relaxed)))
+                .collect()
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let redis_keys: Vec<String> =
+            ids.iter().map(|(id, _)| UpstashStore::k_apikey(id)).collect();
+        let values = store.mget(&redis_keys).await;
+        let keys = self.keys.read().await;
+        for ((id, _), remote) in ids.iter().zip(values.iter()) {
+            let count = match remote {
+                Some(v) => v.parse::<i64>().unwrap_or(0).max(0) as u64,
+                None => continue,
+            };
+            if let Some(k) = keys.iter().find(|k| &k.id == id) {
+                let _ = k.used.fetch_max(count, Ordering::Relaxed);
+            }
+        }
     }
 }

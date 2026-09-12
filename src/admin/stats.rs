@@ -34,6 +34,17 @@ pub async fn get_stats(
         .map(|a| a.day_requests.load(std::sync::atomic::Ordering::Relaxed))
         .sum();
 
+    let redis = match &state.upstash {
+        None => json!({"configured": false, "status": "disabled"}),
+        Some(store) => {
+            if store.is_alive(15).await {
+                json!({"configured": true, "status": "ok"})
+            } else {
+                json!({"configured": true, "status": "unreachable"})
+            }
+        }
+    };
+
     Ok(Json(json!({
         "total_requests": total_requests,
         "total_errors": total_errors,
@@ -46,5 +57,6 @@ pub async fn get_stats(
         "healthy_accounts": active_count.saturating_sub(rate_limited_count),
         "conservation": state.anti_ban.in_conservation(),
         "day_requests": day_used,
+        "redis": redis,
     })))
 }
