@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::AppState;
 
-const CACHE_TTL_SECS: u64 = 600;
+const CACHE_TTL_SECS: u64 = 3600;
 /// Safety cap for a single cached body. Our metadata endpoints return small
 /// JSON; anything bigger passes through uncached (see below).
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -58,11 +58,11 @@ impl ResponseCache {
         Self {
             cache: Cache::builder()
                 .time_to_live(Duration::from_secs(CACHE_TTL_SECS))
-                .max_capacity(2000)
+                .max_capacity(10000)
                 .build(),
             inflight: Cache::builder()
                 .time_to_live(Duration::from_secs(60))
-                .max_capacity(2000)
+                .max_capacity(10000)
                 .build(),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
