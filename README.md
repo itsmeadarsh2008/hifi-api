@@ -183,8 +183,10 @@ Running more than one instance (e.g. several Render hosts sharing the load)? Set
 | Tidal access tokens | Shared on refresh, reused on miss (no cross-host refresh stampedes) |
 | API-key usage quotas | Same INCR + 60s reconcile pattern as daily budgets |
 | Global upstream throttle | Shared fixed 1s window at the `TIDAL_RPS` ceiling (local per-host governor still shapes traffic) |
+| Account credentials | Write-through on add/edit/toggle; union-merged at startup + every 60s (newest `updated_at` wins, live counters preserved) — a wiped host restores its accounts from Redis; explicit deletes stay deleted; backup restores win via republish |
+| API-key definitions | Same pattern (hashes/flags/quota only — raw keys are never stored anywhere) |
 
-Without these vars everything stays local (today's single-host behavior). All Redis calls are fail-open with short timeouts: if Redis is unreachable the instance keeps serving from local state. Intentionally **not** synced: account credentials (stay in per-host SQLite), the metadata response cache (per-host L1), IP reputation, request log, proxy state.
+Without these vars everything stays local (today's single-host behavior). All Redis calls are fail-open with short timeouts: if Redis is unreachable the instance keeps serving from local state. Intentionally **not** synced: the metadata response cache (per-host L1), IP reputation, request log, proxy state. Note that anyone holding the Redis REST token can read the backed-up Tidal credentials — guard it like database access.
 
 ### Preview-only tracks
 

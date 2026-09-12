@@ -275,6 +275,10 @@ pub async fn restore_backup(
     // Publish the restored settings fleet-wide (reload_* above already
     // merged usage/cooldowns from Redis).
     state.rate_limits.save_to_redis().await;
+    // The restore wins: republish the restored roster and drop anything the
+    // backup intentionally removed, or the next merge resurrects it.
+    state.account_manager.publish_all_to_redis().await;
+    state.api_keys.publish_all_to_redis().await;
     state.anti_ban.reload_limiter();
 
     let (healthy, total) = state.account_manager.healthy_count().await;
