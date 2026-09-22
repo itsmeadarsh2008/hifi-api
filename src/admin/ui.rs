@@ -295,6 +295,8 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Cache hits <strong id="cc-hits">—</strong></span>
 <span class="card-stat">Misses <strong id="cc-misses">—</strong></span>
+<span class="card-stat">Stale <strong id="cc-stale">—</strong></span>
+<span class="card-stat">Negative <strong id="cc-negative">—</strong></span>
 </div>
 <button class="btn" onclick="clearCache()" id="clearCacheBtn">Clear Cache</button>
 </div>
@@ -1067,6 +1069,8 @@ async function loadCacheStats() {
         var c = (await res.json()).cache || {};
         document.getElementById('cc-hits').textContent = c.hits != null ? c.hits : '—';
         document.getElementById('cc-misses').textContent = c.misses != null ? c.misses : '—';
+        document.getElementById('cc-stale').textContent = c.stale != null ? c.stale : '—';
+        document.getElementById('cc-negative').textContent = c.negative != null ? c.negative : '—';
     } catch(e) {}
 }
 

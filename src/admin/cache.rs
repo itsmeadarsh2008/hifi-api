@@ -13,6 +13,8 @@ pub async fn cache_stats(
         "hits": state.cache.hits.load(Ordering::Relaxed),
         "misses": state.cache.misses.load(Ordering::Relaxed),
         "coalesced": state.cache.coalesced.load(Ordering::Relaxed),
+        "stale": state.cache.stale.load(Ordering::Relaxed),
+        "negative": state.cache.negative_hits.load(Ordering::Relaxed),
     } })))
 }
 

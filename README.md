@@ -156,7 +156,7 @@ No per-IP or upstream rate limiting is applied — every request goes straight t
 2. **Playback queue** — `/track`, `/trackManifests`, `/dash`, `/widevine` and `/video` are serialized to one request per playback account at a time (upstream parity). When every slot is busy the request becomes a pollable job: `202 Accepted` with `Location: /playback/requests/{id}` plus `Retry-After` and `X-Playback-Queue-Position` headers. Poll `GET` for the result, `DELETE` to cancel. See [`GET /playback/requests/{request_id}`](#get-playbackrequestsrequest_id--delete-playbackrequestsrequest_id).
 3. **Catalog split** — metadata routes (`/info`, `/search`, `/album`, `/artist`, `/mix`, `/playlist`, `/cover`, `/lyrics`, `/topvideos`, …) prefer a dedicated catalog credential when configured (`CATALOG_TOKEN` or a `CATALOG_*`/catalog-flagged account), falling back to the pool. Catalog accounts never serve playback.
 
-Identical concurrent metadata requests (e.g. ten users hitting the same search) are coalesced into one upstream call, and metadata responses are cached for an hour.
+Identical concurrent metadata requests (e.g. ten users hitting the same search) are coalesced into one upstream call. Metadata responses are cached for an hour, then served stale for another hour while a background refresh runs (so expiry never causes a user-facing miss); repeat errors are cached briefly (404s for 60s, 429/5xx for 15s). Cache keys are canonicalized, so encoding or param-order variants of the same request share one entry. Watch `X-Cache` (`HIT`/`STALE`/`NEGATIVE`/`MISS`) and the Cache card (hits, misses, stale, negative).
 
 ### Multi-instance sync
 
