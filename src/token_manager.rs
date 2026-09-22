@@ -17,9 +17,10 @@ use crate::upstash::UpstashStore;
 
 pub struct TokenManager {
     db: Option<SqlitePool>,
-    #[allow(dead_code)]
-    token_cache: Cache<String, (String, i64)>,
-    refresh_lock: Mutex<String>,
+    /// Per-account refresh guards: concurrent refreshes for *different*
+    /// accounts proceed in parallel; only the same account serializes
+    /// (double-checked after locking). Auto-evicts via TTL.
+    refresh_locks: Cache<String, Arc<Mutex<()>>>,
     account_manager: OnceLock<Arc<AccountManager>>,
     proxy_manager: OnceLock<Arc<ProxyManager>>,
     /// Shared cross-instance state (None = single-host mode, skip sync).
@@ -30,11 +31,10 @@ impl TokenManager {
     pub fn new(db: Option<SqlitePool>) -> Self {
         Self {
             db,
-            token_cache: Cache::builder()
+            refresh_locks: Cache::builder()
                 .time_to_live(Duration::from_secs(3600))
-                .max_capacity(100)
+                .max_capacity(500)
                 .build(),
-            refresh_lock: Mutex::new(String::new()),
             account_manager: OnceLock::new(),
             proxy_manager: OnceLock::new(),
             upstash: OnceLock::new(),
@@ -112,7 +112,14 @@ impl TokenManager {
         account: &AccountState,
         http_client: &Client,
     ) -> Result<String, AppError> {
-        let _guard = self.refresh_lock.lock().await;
+        // Per-account guard (same singleflight pattern as the response
+        // cache): a cold start refreshing 40 accounts fans out instead of
+        // queueing behind one global lock.
+        let guard = self
+            .refresh_locks
+            .get_with(account.id.clone(), async { Arc::new(Mutex::new(())) })
+            .await;
+        let _guard = guard.lock().await;
 
         {
             let access_token = account.access_token.read().await;

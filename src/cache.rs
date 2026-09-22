@@ -36,6 +36,19 @@ fn cacheable(path: &str) -> bool {
     PREFIXES.iter().any(|p| path.starts_with(p))
 }
 
+/// Normalize a raw query string for cache keys: sort the `&`-separated
+/// pairs so `?b=2&a=1` and `?a=1&b=2` share one entry instead of
+/// fragmenting the cache. Pure function — unit tested.
+fn normalize_query(query: Option<&str>) -> String {
+    let q = query.unwrap_or("");
+    if !q.contains('&') {
+        return q.to_string();
+    }
+    let mut pairs: Vec<&str> = q.split('&').collect();
+    pairs.sort_unstable();
+    pairs.join("&")
+}
+
 #[derive(Clone)]
 pub(crate) struct CachedResponse {
     status: u16,
@@ -118,7 +131,7 @@ pub async fn cache_responses(
     if req.method() != Method::GET || !cacheable(req.uri().path()) {
         return next.run(req).await;
     }
-    let key = format!("{}?{}", req.uri().path(), req.uri().query().unwrap_or(""));
+    let key = format!("{}?{}", req.uri().path(), normalize_query(req.uri().query()));
 
     if let Some(hit) = state.cache.get(&key).await {
         state.cache.hits.fetch_add(1, Ordering::Relaxed);
@@ -185,4 +198,24 @@ pub async fn cache_responses(
 
     // build_response sets X-Cache: MISS.
     build_response(&cached, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_query;
+
+    #[test]
+    fn query_pairs_sort_into_one_key() {
+        assert_eq!(normalize_query(Some("b=2&a=1")), "a=1&b=2");
+        assert_eq!(normalize_query(Some("a=1&b=2")), "a=1&b=2");
+        // Repeated params keep their multiplicity.
+        assert_eq!(
+            normalize_query(Some("formats=FLAC&formats=AACLC&adaptive=true")),
+            "adaptive=true&formats=AACLC&formats=FLAC"
+        );
+        // Single pair and empty queries pass through untouched.
+        assert_eq!(normalize_query(Some("id=42")), "id=42");
+        assert_eq!(normalize_query(None), "");
+        assert_eq!(normalize_query(Some("")), "");
+    }
 }

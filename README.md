@@ -26,7 +26,7 @@ This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences
 | **Concurrent connections** | ~50-100 per instance (async Python, GIL-bound) | ~5,000-10,000 concurrent tasks per instance (tokio M:N threading, no GIL)¹ |
 | **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate) with immediate failover across accounts, playback queue (one request per account at a time, `202` + polling when saturated), dedicated catalog credential for metadata |
 | **Request distribution** | Full requests, one account at a time | Weighted per-request selection across accounts; playback requests queue when all accounts are busy instead of failing |
-| **Token cache** | In-memory dict | moka (TTL-aware, bounded) |
+| **Token cache** | In-memory dict | Per-account memory + shared Redis, per-account refresh locks |
 | **Throttling** | Playback serialization + 429 retries | None — requests go straight to Tidal; playback concurrency is bounded by account count with a pollable queue (see [`GET /playback/requests/{request_id}`](#get-playbackrequestsrequest_id--delete-playbackrequestsrequest_id)) |
 | **Auth flow** | Separate Python script (tidal_auth.py) | Built-in OAuth device flow (`AUTO_SETUP=true`) |
 | **Admin panel** | External SPA | Embedded single HTML file (rust-embed) |
