@@ -4,6 +4,10 @@ services:
     runtime: image
     repo: https://github.com/itsmeadarsh2008/hifi-api
     plan: free
+    # Render only marks the deploy live after this returns 200 (and
+    # restarts unhealthy instances). /health is exempt from API-key auth
+    # and never blocks on a dead Redis (15s cached verdict).
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         value: /data/hifi.db
@@ -15,6 +19,10 @@ services:
         value: info
       - key: AUTO_SETUP
         value: "true"
+      # This host's pool Redis (native rediss:// URL, Layerbase). Secrets
+      # stay in the dashboard — never commit values.
+      - key: REDIS_POOL
+        sync: false
     disk:
       name: data
       mountPath: /data
