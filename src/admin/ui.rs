@@ -187,6 +187,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <h1>HiFi API Admin</h1>
 <div style="display:flex;gap:8px;align-items:center">
 <button class="btn btn-primary" onclick="testAll()" id="testAllBtn">Test All</button>
+<button class="btn" onclick="clearPlaybackQueue()" id="clearQueueBtn" title="Cancel every queued playback request">Clear Queue</button>
 <span class="badge" id="version">v2.10</span>
 </div>
 </div>
@@ -1041,8 +1042,29 @@ async function restoreBackup(e) {
     e.target.value = '';
 }
 
-async function clearCache() {
-    var btn = document.getElementById('clearCacheBtn');
+async function clearPlaybackQueue() {
+    if (!confirm('Cancel every queued playback request? In-flight requests finish normally.')) return;
+    var btn = document.getElementById('clearQueueBtn');
+    btn.textContent = 'Clearing...';
+    btn.disabled = true;
+    try {
+        var res = await fetch('/admin/playback/clear', { method: 'POST', headers: headers() });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('success').textContent = 'Queue cleared: ' + (data.cancelled_queued || 0) + ' queued cancelled.';
+            loadRequestLog();
+        } else {
+            document.getElementById('error').textContent = data.detail || 'Error';
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    } finally {
+        btn.textContent = 'Clear Queue';
+        btn.disabled = false;
+    }
+}
+
+async function clearCache() {    var btn = document.getElementById('clearCacheBtn');
     btn.textContent = 'Clearing...';
     btn.disabled = true;
     try {
