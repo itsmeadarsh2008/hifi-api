@@ -105,6 +105,24 @@ fn native_host(client: &redis::Client) -> String {
     }
 }
 
+/// Pool selector (`USE=private|public`) for the shared Valkey instance:
+/// private→db 0, public→db 1, overriding any db in the URL. Returns the
+/// (pool label, db override); unset means "URL/default decides".
+/// Anything else is an error — loading the wrong pool's accounts is worse
+/// than no sync at all.
+fn resolve_pool() -> Result<(Option<String>, Option<i64>), String> {
+    let raw = std::env::var("USE").unwrap_or_default();
+    let v = raw.trim().to_lowercase();
+    if v.is_empty() {
+        return Ok((None, None));
+    }
+    match v.as_str() {
+        "private" => Ok((Some("private".to_string()), Some(0))),
+        "public" => Ok((Some("public".to_string()), Some(1))),
+        _ => Err(raw),
+    }
+}
+
 enum Backend {
     Rest {
         client: reqwest::Client,
@@ -114,6 +132,10 @@ enum Backend {
     Native {
         client: redis::Client,
         mgr: tokio::sync::OnceCell<redis::aio::ConnectionManager>,
+        /// Pool label from `USE` (None = the URL/default decided).
+        pool: Option<String>,
+        /// Logical db actually used (for display).
+        db: i64,
     },
 }
 
@@ -169,11 +191,39 @@ impl UpstashStore {
                 );
                 return None;
             }
-            match redis::Client::open(native_url.as_str()) {
+            let (pool, db_override) = match resolve_pool() {
+                Ok(v) => v,
+                Err(bad) => {
+                    tracing::warn!(
+                        "USE={:?} invalid (want public|private); Redis sync disabled",
+                        bad
+                    );
+                    return None;
+                }
+            };
+            let mut info: redis::ConnectionInfo = match native_url.parse() {
+                Ok(i) => i,
+                Err(e) => {
+                    tracing::warn!("{} invalid ({}); Redis sync disabled", NATIVE_URL_ENV, e);
+                    return None;
+                }
+            };
+            if let Some(db) = db_override {
+                info.redis.db = db;
+            }
+            let db = info.redis.db;
+            match redis::Client::open(info) {
                 Ok(client) => {
+                    tracing::info!(
+                        "Redis pool: {} (db {})",
+                        pool.as_deref().unwrap_or("url-default"),
+                        db
+                    );
                     return Some(Self::new(Backend::Native {
                         client,
                         mgr: tokio::sync::OnceCell::new(),
+                        pool,
+                        db,
                     }));
                 }
                 Err(e) => {
@@ -216,16 +266,21 @@ impl UpstashStore {
         }
     }
 
-    /// Safe endpoint label for the admin panel: backend kind + host only.
-    /// Never includes credentials — the native URL embeds its password and
-    /// the REST bearer token is secret too.
+    /// Safe endpoint label for the admin panel: backend kind + host + db,
+    /// plus the `USE` pool when one selected it. Never includes credentials
+    /// — the native URL embeds its password and the REST bearer token is
+    /// secret too.
     pub fn describe(&self) -> String {
         match self.backend.as_ref() {
             Backend::Rest { base, .. } => {
                 format!("upstash-rest @ {}", host_of_url(base))
             }
-            Backend::Native { client, .. } => {
-                format!("native-redis @ {}", native_host(client))
+            Backend::Native { client, pool, db, .. } => {
+                let mut s = format!("native-redis @ {} (db {})", native_host(client), db);
+                if let Some(p) = pool {
+                    s.push_str(&format!(", USE={}", p));
+                }
+                s
             }
         }
     }
@@ -333,7 +388,7 @@ impl UpstashStore {
         F: FnOnce(redis::aio::ConnectionManager) -> Fut,
         Fut: std::future::Future<Output = redis::RedisResult<T>>,
     {
-        let Backend::Native { client, mgr } = self.backend.as_ref() else {
+        let Backend::Native { client, mgr, .. } = self.backend.as_ref() else {
             return None;
         };
         let m = if let Some(m) = mgr.get() {
@@ -697,6 +752,7 @@ mod tests {
         "UPSTASH_REDIS_REST_TOKEN",
         "REDIS_POOL",
         "PUBLIC_POOL_REDIS_URL",
+        "USE",
     ];
 
     #[test]
@@ -749,6 +805,8 @@ mod tests {
         let native = UpstashStore::new(super::Backend::Native {
             client,
             mgr: tokio::sync::OnceCell::new(),
+            pool: None,
+            db: 0,
         });
         let label = native.describe();
         assert!(label.contains("native-redis"), "{}", label);
@@ -756,6 +814,7 @@ mod tests {
         assert!(!label.contains("hunter2"), "{}", label);
         assert!(!label.contains("default"), "{}", label);
     }
+
 
     #[test]
     fn disabled_without_env() {
@@ -766,12 +825,81 @@ mod tests {
             std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
             std::env::remove_var("REDIS_POOL");
             std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            std::env::remove_var("USE");
         }
         assert!(UpstashStore::from_env().is_none());
         unsafe {
             std::env::set_var("UPSTASH_REDIS_REST_URL", "https://example.upstash.io");
         }
         // Token still missing → still disabled.
+        assert!(UpstashStore::from_env().is_none());
+    }
+
+    #[test]
+    fn use_private_selects_db0_overriding_url_db() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::take(STORE_KEYS);
+        unsafe {
+            std::env::remove_var("UPSTASH_REDIS_REST_URL");
+            std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
+            std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            // Even when the URL points at db 7, USE=private wins with db 0.
+            std::env::set_var("REDIS_POOL", "rediss://default:pw@db.example.dev:6379/7");
+            std::env::set_var("USE", "private");
+        }
+        let store = UpstashStore::from_env().expect("USE=private should build");
+        assert_eq!(store.backend_kind(), "native-redis");
+        let label = store.describe();
+        assert!(label.contains("db 0"), "{}", label);
+        assert!(label.contains("USE=private"), "{}", label);
+    }
+
+    #[test]
+    fn use_public_selects_db1() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::take(STORE_KEYS);
+        unsafe {
+            std::env::remove_var("UPSTASH_REDIS_REST_URL");
+            std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
+            std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            std::env::set_var("REDIS_POOL", "rediss://default:pw@db.example.dev:6379");
+            std::env::set_var("USE", "PUBLIC");
+        }
+        let store = UpstashStore::from_env().expect("USE=public should build");
+        let label = store.describe();
+        assert!(label.contains("db 1"), "{}", label);
+        assert!(label.contains("USE=public"), "{}", label);
+    }
+
+    #[test]
+    fn use_unset_respects_url_db() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::take(STORE_KEYS);
+        unsafe {
+            std::env::remove_var("UPSTASH_REDIS_REST_URL");
+            std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
+            std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            std::env::remove_var("USE");
+            std::env::set_var("REDIS_POOL", "rediss://default:pw@db.example.dev:6379/3");
+        }
+        let store = UpstashStore::from_env().expect("explicit db should build");
+        let label = store.describe();
+        assert!(label.contains("db 3"), "{}", label);
+        assert!(!label.contains("USE="), "{}", label);
+    }
+
+    #[test]
+    fn invalid_use_disables_rather_than_wrong_pool() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guard = EnvGuard::take(STORE_KEYS);
+        unsafe {
+            std::env::remove_var("UPSTASH_REDIS_REST_URL");
+            std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
+            std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            std::env::set_var("REDIS_POOL", "rediss://default:pw@db.example.dev:6379");
+            // A typo must never silently load the other pool's accounts.
+            std::env::set_var("USE", "privat");
+        }
         assert!(UpstashStore::from_env().is_none());
     }
 
@@ -784,6 +912,7 @@ mod tests {
             // belongs to exactly one pool.
             std::env::set_var("UPSTASH_REDIS_REST_URL", "https://example.upstash.io");
             std::env::set_var("UPSTASH_REDIS_REST_TOKEN", "dummy");
+            std::env::remove_var("USE");
             std::env::set_var(
                 "REDIS_POOL",
                 "rediss://default:pw@public.example.dev:6379",
@@ -802,6 +931,7 @@ mod tests {
             std::env::remove_var("UPSTASH_REDIS_REST_URL");
             std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
             std::env::remove_var("REDIS_POOL");
+            std::env::remove_var("USE");
             // Hosts not yet renamed keep syncing via the deprecated name.
             std::env::set_var(
                 "PUBLIC_POOL_REDIS_URL",
@@ -820,6 +950,7 @@ mod tests {
         unsafe {
             std::env::remove_var("UPSTASH_REDIS_REST_URL");
             std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
+            std::env::remove_var("USE");
             std::env::set_var("REDIS_POOL", "rediss://default:pw@new.example.dev:6379");
             std::env::set_var(
                 "PUBLIC_POOL_REDIS_URL",
@@ -840,6 +971,7 @@ mod tests {
             std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
             std::env::remove_var("REDIS_POOL");
             std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            std::env::remove_var("USE");
             // Present but unusable: stay disabled rather than syncing nowhere.
             std::env::set_var("REDIS_POOL", "not-a-redis-url");
         }
@@ -855,6 +987,7 @@ mod tests {
             std::env::remove_var("UPSTASH_REDIS_REST_TOKEN");
             std::env::remove_var("REDIS_POOL");
             std::env::remove_var("PUBLIC_POOL_REDIS_URL");
+            std::env::remove_var("USE");
             // An Upstash REST URL pasted into the wrong var must not sync.
             std::env::set_var("REDIS_POOL", "https://example.upstash.io");
         }

@@ -87,6 +87,7 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `DISCORD_WEBHOOK_URL` | (none) | Discord webhook for 403/all-down alerts (empty = disabled, test in panel) |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | (none) | Shared cross-instance state via Upstash Redis (empty = single-host mode). See [Multi-instance sync](#multi-instance-sync) |
 | `REDIS_POOL` | (none) | Alternative backend: native Redis/Valkey for this host's pool (`rediss://user:pass@host:port/db`). Wins over the Upstash pair when set — one backend per fleet. (`PUBLIC_POOL_REDIS_URL` still works as a deprecated fallback.) |
+| `USE` | (none) | Pool selector on the shared instance: `private` loads db 0, `public` loads db 1 (overrides the URL db). Anything else disables sync rather than loading the wrong pool. |
 | `RUST_LOG` | `info` | Log level |
 
 ## Deployment
