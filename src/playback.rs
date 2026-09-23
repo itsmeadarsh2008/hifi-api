@@ -29,12 +29,15 @@ const JOB_TTL_SECS: i64 = 300;
 
 /// Backpressure: cap queued (pending, unpolled-or-live) jobs at
 /// POOL × this. Beyond it dispatch returns 503 + Retry-After instead of
-/// growing the queue without bound.
-const MAX_QUEUE_FACTOR: usize = 10;
+/// growing the queue. Factor 1 keeps the queue near-zero: every request
+/// either runs instantly on a free slot, waits at most ~one op behind,
+/// or is shed for immediate retry — never parked thousands deep.
+const MAX_QUEUE_FACTOR: usize = 1;
 /// Pending jobs no client has polled within this long are dead weight —
-/// players give up in seconds, so an unpolled entry is a corpse burning a
-/// future upstream slot on nobody-waiting work. Pure threshold, unit tested.
-const PENDING_TIMEOUT_SECS: i64 = 180;
+/// live clients poll every ~1s (Retry-After), so 60 missed polls means
+/// the waiter is gone. Expire corpses fast to keep slots serving live
+/// requests. Pure threshold, unit tested.
+const PENDING_TIMEOUT_SECS: i64 = 60;
 /// Upper bound for one playback op holding a slot. Normal ops take seconds;
 /// failover storms must not wedge a slot forever.
 const OP_TIMEOUT_SECS: u64 = 120;
@@ -741,13 +744,13 @@ mod tests {
 
     #[test]
     fn shed_threshold_scales_with_pool() {
-        // 20 accounts → cap 200: the reported 8.5k backlog would shed.
-        assert!(!PlaybackQueue::over_capacity(199, 20));
-        assert!(PlaybackQueue::over_capacity(200, 20));
+        // 20 accounts → cap 20: only ~one op of waiting, then shed.
+        assert!(!PlaybackQueue::over_capacity(19, 20));
+        assert!(PlaybackQueue::over_capacity(20, 20));
         assert!(PlaybackQueue::over_capacity(8495, 20));
-        // Degenerate pools still gate at >= 10.
-        assert!(!PlaybackQueue::over_capacity(9, 0));
-        assert!(PlaybackQueue::over_capacity(10, 0));
+        // Degenerate pools still gate at >= 1.
+        assert!(!PlaybackQueue::over_capacity(0, 0));
+        assert!(PlaybackQueue::over_capacity(1, 0));
         assert!(!PlaybackQueue::over_capacity(0, 3));
     }
 
