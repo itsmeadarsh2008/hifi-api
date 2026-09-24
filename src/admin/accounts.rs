@@ -232,12 +232,20 @@ pub async fn test_all_accounts(
     let country = &state.config.country_code;
     let client = state.tidal_client.working_client().await?;
     let token_manager = state.token_manager.clone();
+    let tidal_client = state.tidal_client.clone();
+    let account_manager = state.account_manager.clone();
+    // Premium fixtures are throttled: N accounts × 4 probe tracks must not
+    // hit Tidal at once. Token+search checks stay fully concurrent.
+    let probe_sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
 
     let mut handles = Vec::new();
     for account in &accounts {
         let acc = account.clone();
         let c = client.clone();
         let tm = token_manager.clone();
+        let tc = tidal_client.clone();
+        let am = account_manager.clone();
+        let sem = probe_sem.clone();
         let cc = country.clone();
         handles.push(tokio::spawn(async move {
             let label = acc.label.clone();
@@ -269,20 +277,29 @@ pub async fn test_all_accounts(
                                 body.clone()
                             };
                             if status_code == 200 {
-                                json!({"id": id, "label": label, "ok": true, "ms": elapsed, "status_code": status_code, "response_preview": response_preview, "response_body": body, "token_expires_at": token_expires_at, "is_active": is_active})
+                                // Basic check passed: probe premium (throttled).
+                                // Display only — never sidelines the account.
+                                let _permit = sem.acquire_owned().await.ok();
+                                let (premium, premium_reason) =
+                                    tc.probe_account_premium(&acc).await;
+                                am.set_premium(&id, &premium).await;
+                                json!({"id": id, "label": label, "ok": true, "ms": elapsed, "status_code": status_code, "response_preview": response_preview, "response_body": body, "token_expires_at": token_expires_at, "is_active": is_active, "premium": premium, "premium_reason": premium_reason})
                             } else {
-                                json!({"id": id, "label": label, "ok": false, "ms": elapsed, "status_code": status_code, "error": format!("HTTP {}", status_code), "response_preview": response_preview, "response_body": body, "token_expires_at": token_expires_at, "is_active": is_active})
+                                am.set_premium(&id, "unknown").await;
+                                json!({"id": id, "label": label, "ok": false, "ms": elapsed, "status_code": status_code, "error": format!("HTTP {}", status_code), "response_preview": response_preview, "response_body": body, "token_expires_at": token_expires_at, "is_active": is_active, "premium": "unknown", "premium_reason": "basic check failed — fix login first"})
                             }
                         }
                         Err(e) => {
                             let elapsed = start.elapsed().as_millis() as u64;
-                            json!({"id": id, "label": label, "ok": false, "ms": elapsed, "error": e.to_string(), "token_expires_at": token_expires_at, "is_active": is_active})
+                            am.set_premium(&id, "unknown").await;
+                            json!({"id": id, "label": label, "ok": false, "ms": elapsed, "error": e.to_string(), "token_expires_at": token_expires_at, "is_active": is_active, "premium": "unknown", "premium_reason": "basic check failed — fix login first"})
                         }
                     }
                 }
                 Err(e) => {
                     let elapsed = start.elapsed().as_millis() as u64;
-                    json!({"id": id, "label": label, "ok": false, "ms": elapsed, "error": format!("Token: {:?}", e), "token_expires_at": token_expires_at, "is_active": is_active})
+                    am.set_premium(&id, "unknown").await;
+                    json!({"id": id, "label": label, "ok": false, "ms": elapsed, "error": format!("Token: {:?}", e), "token_expires_at": token_expires_at, "is_active": is_active, "premium": "unknown", "premium_reason": "basic check failed — fix login first"})
                 }
             }
         }));

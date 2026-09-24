@@ -103,6 +103,9 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .status-label { font-size:11px; margin-left:6px; padding:2px 8px; border-radius:4px; font-weight:500; }
 .status-label.status-ok { color:#3fb950; background:rgba(63,185,80,0.1); }
 .status-label.status-err { color:#f85149; background:rgba(248,81,73,0.1); }
+.status-label.status-premium { color:#3fb950; background:rgba(63,185,80,0.1); }
+.status-label.status-preview { color:#d29922; background:rgba(210,153,34,0.1); }
+.status-label.status-muted { color:#8b949e; background:rgba(139,148,158,0.1); }
 
 .test-results-section { background:#161b22; border:1px solid #30363d; border-radius:10px; margin:24px 0; overflow:hidden; transition:border-color 0.2s, box-shadow 0.2s; }
 .test-results-section:hover { border-color:#484f58; box-shadow:0 4px 24px rgba(0,0,0,0.3); }
@@ -117,6 +120,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .test-result-row .result-status { min-width:44px; font-weight:600; }
 .test-result-row .result-http { min-width:34px; color:#8b949e; }
 .test-result-row .result-ms { min-width:60px; color:#8b949e; text-align:right; }
+.test-result-row .result-premium { min-width:80px; color:#8b949e; font-size:11px; }
 .test-result-row .result-token { min-width:90px; color:#8b949e; font-size:11px; }
 
 .json-key { color:#79c0ff; }
@@ -442,6 +446,7 @@ async function testAll() {
         for (var r of data.results) { _testResults[r.id] = r; }
         _testCacheTs = now;
         renderTestResults(_testResults);
+        fetchData();
     } catch(e) {
         document.getElementById('error').textContent = 'Test error: ' + e.message;
     } finally {
@@ -469,11 +474,13 @@ function renderTestResults(results) {
         var msText = r.ms ? r.ms + 'ms' : '-';
         var httpText = r.status_code || '-';
         var tokenStr = r.token_expires_at ? timeStr(r.token_expires_at) : '-';
+        var premText = r.premium ? esc(r.premium) : '-';
         html += '<div class="test-result-row" onclick="showTestDetails(\'' + id + '\')">';
         html += '<span class="result-label">' + label + '</span>';
         html += '<span class="result-status ' + statusClass + '">' + statusText + '</span>';
         html += '<span class="result-http">' + httpText + '</span>';
         html += '<span class="result-ms">' + msText + '</span>';
+        html += '<span class="result-premium">' + premText + '</span>';
         html += '<span class="result-token">' + tokenStr + '</span>';
         html += '</div>';
         var badge = document.getElementById('test-' + id);
@@ -554,6 +561,9 @@ function showTestDetails(id) {
     html += '<div class="cred-row"><span class="cred-key">Response Time</span><span class="cred-value">' + r.ms + 'ms</span></div>';
     html += '<div class="cred-row"><span class="cred-key">Token Expiry</span><span class="cred-value">' + timeStr(r.token_expires_at) + '</span></div>';
     html += '<div class="cred-row"><span class="cred-key">Active</span><span class="cred-value">' + (r.is_active ? 'Yes' : 'No') + '</span></div>';
+    if (r.premium) {
+        html += '<div class="cred-row"><span class="cred-key">Premium</span><span class="cred-value">' + esc(r.premium) + (r.premium_reason ? ' — ' + esc(r.premium_reason) : '') + '</span></div>';
+    }
     if (r.error) {
         html += '<div class="cred-row" style="margin-top:12px"><span class="cred-key">Error</span><span class="cred-value test-fail">' + esc(r.error) + '</span></div>';
     }
@@ -627,6 +637,9 @@ async function fetchData() {
             fetch('/admin/stats', { headers: headers() }),
             fetch('/admin/accounts', { headers: headers() })
         ]);
+        fetch('/').then(function(r) { return r.json(); }).then(function(d) {
+            if (d && d.version) document.getElementById('version').textContent = 'v' + d.version;
+        }).catch(function() {});
         if (statsRes.status === 401 || accountsRes.status === 401) { setKey(); return; }
 
         if (!statsRes.ok) {
@@ -671,10 +684,10 @@ async function fetchData() {
                 var uid = a.user_id || '-';
                 var catalogBadge = a.is_catalog ? '<span class="status-label" style="color:#d2a8ff;background:rgba(210,168,255,0.1)">CATALOG</span>' : '';
                 var premiumBadge = (function(p) {
-                    if (p === 'premium') return '<span class="status-label status-ok">PREMIUM</span>';
-                    if (p === 'preview-only') return '<span class="status-label" style="color:#d29922;background:rgba(210,153,34,0.1)">PREVIEW-ONLY</span>';
+                    if (p === 'premium') return '<span class="status-label status-premium">PREMIUM</span>';
+                    if (p === 'preview-only') return '<span class="status-label status-preview">PREVIEW-ONLY</span>';
                     if (p === 'error') return '<span class="status-label status-err">CHECK FAILED</span>';
-                    return '<span class="status-label" style="color:#8b949e;background:rgba(139,148,158,0.1)">UNCHECKED</span>';
+                    return '<span class="status-label status-muted">UNCHECKED</span>';
                 })(a.premium_status);
                 var catalogBtn = a.is_catalog
                     ? '<button class="btn" onclick="setCatalog(\'' + a.id + '\',false)" title="Return to playback pool">Uncatalog</button>'
