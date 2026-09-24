@@ -19,11 +19,11 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .header h1 { font-size:22px; color:#f0f6fc; letter-spacing:-0.3px; }
 .header .badge { font-size:11px; background:#1f6feb; color:#fff; padding:3px 10px; border-radius:10px; font-weight:500; }
 
-.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:24px; }
-.stat-card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:18px 20px; transition:border-color 0.2s; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:12px; margin-bottom:24px; }
+.stat-card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:18px 20px; transition:border-color 0.2s; min-width:0; }
 .stat-card:hover { border-color:#484f58; }
-.stat-card .label { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; }
-.stat-card .value { font-size:26px; font-weight:700; margin-top:4px; color:#f0f6fc; letter-spacing:-0.5px; }
+.stat-card .label { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; line-height:1.6; }
+.stat-card .value { font-size:clamp(19px,2.2vw,26px); font-weight:700; margin-top:4px; color:#f0f6fc; letter-spacing:-0.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .accounts-grid { display:flex; flex-direction:column; gap:20px; margin-bottom:24px; }
 .account-card { background:#161b22; border:1px solid #30363d; border-radius:10px; overflow:hidden; transition:border-color 0.2s, box-shadow 0.2s; }
@@ -417,7 +417,7 @@ function catalogCard(cat) {
 
 function redisCard(redis) {    redis = redis || {};
     if (!redis.configured) {
-        return '<div class="stat-card"><div class="label">Redis Sync</div><div class="value" style="font-size:18px;color:#8b949e">Single-host</div></div>';
+        return '<div class="stat-card"><div class="label">Redis Sync</div><div class="value" style="font-size:18px;color:#8b949e" title="Single-host mode (no Redis sync)">Local</div></div>';
     }
     var ep = redis.endpoint ? '<div style="font-size:11px;color:#8b949e;margin-top:4px;word-break:break-all">' + esc(redis.endpoint) + '</div>' : '';
     if (redis.status === 'ok') {
