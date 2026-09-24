@@ -17,6 +17,16 @@ pub async fn get_stats(
         .iter()
         .map(|a| a.error_count.load(std::sync::atomic::Ordering::Relaxed))
         .sum();
+    // Headline error rate: user-facing responses over the recent window
+    // (infra probes excluded), NOT account-attempt counters — one user
+    // request failing over 3 accounts used to read as "66% error" here.
+    // Cumulative account counters stay below for totals.
+    let log = state.request_log.summary(0);
+    let error_rate = log
+        .get("error_rate")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0.00%")
+        .to_string();
     let active_count = accounts
         .iter()
         .filter(|a| a.is_active.load(std::sync::atomic::Ordering::Relaxed))
@@ -60,9 +70,7 @@ pub async fn get_stats(
     Ok(Json(json!({
         "total_requests": total_requests,
         "total_errors": total_errors,
-        "error_rate": if total_requests > 0 {
-            format!("{:.2}%", (total_errors as f64 / total_requests as f64) * 100.0)
-        } else { "0.00%".into() },
+        "error_rate": error_rate,
         "total_accounts": accounts.len(),
         "active_accounts": active_count,
         "healthy_accounts": active_count,

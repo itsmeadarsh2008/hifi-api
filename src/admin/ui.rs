@@ -201,6 +201,8 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <span>p50 <strong id="rq-p50">—</strong></span>
 <span>p95 <strong id="rq-p95">—</strong></span>
 <span id="rq-endpoints"></span>
+<span id="rq-statuses" style="color:#f0883e"></span>
+<span id="rq-err-endpoints" style="color:#f85149"></span>
 <span id="rq-tracks" style="color:#d2a8ff"></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
@@ -295,6 +297,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Cache hits <strong id="cc-hits">—</strong></span>
 <span class="card-stat">Misses <strong id="cc-misses">—</strong></span>
+<span class="card-stat">Hit rate <strong id="cc-hitrate">—</strong></span>
 <span class="card-stat">Stale <strong id="cc-stale">—</strong></span>
 <span class="card-stat">Negative <strong id="cc-negative">—</strong></span>
 </div>
@@ -364,6 +367,17 @@ function setKey() {
 }
 if (!adminKey) setKey();
 
+function relAgo(ts) {
+    if (!ts || ts <= 0) return 'never';
+    var s = Math.floor(Date.now() / 1000) - ts;
+    if (s < 90) return 'just now';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    var h = Math.floor(m / 60);
+    if (h < 48) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
+}
+
 function timeStr(ts) {
     if (!ts || ts === 0) return 'No expiry / needs refresh';
     var d = new Date(ts * 1000);
@@ -381,9 +395,8 @@ function timeStr(ts) {
 function playbackCard(pb) {
     pb = pb || {};
     var active = pb.active != null ? pb.active : '—';
-    var pending = pb.pending != null ? pb.pending : '—';
     var pool = pb.pool_size != null ? pb.pool_size : '—';
-    return '<div class="stat-card"><div class="label">Playback ' + active + '/' + pool + '</div><div class="value">' + pending + ' queued</div></div>';
+    return '<div class="stat-card"><div class="label">Playback live</div><div class="value">' + active + '/' + pool + '</div></div>';
 }
 
 function catalogCard(cat) {
@@ -632,7 +645,7 @@ async function fetchData() {
 
         document.getElementById('stats').innerHTML =
             '<div class="stat-card"><div class="label">Total Requests</div><div class="value">' + (stats.total_requests || 0) + '</div></div>' +
-            '<div class="stat-card"><div class="label">Error Rate</div><div class="value">' + (stats.error_rate || '0.00%') + '</div></div>' +
+            '<div class="stat-card"><div class="label">Error Rate <span style="opacity:.55;font-size:11px">last 5k</span></div><div class="value">' + (stats.error_rate || '0.00%') + '</div></div>' +
             '<div class="stat-card"><div class="label">Active</div><div class="value">' + (stats.healthy_accounts || 0) + '/' + (stats.total_accounts || 0) + '</div></div>' +
             playbackCard(stats.playback) +
             catalogCard(stats.catalog) +
@@ -676,7 +689,8 @@ async function fetchData() {
                     '<div class="card-footer">' +
                         '<div class="card-stats">' +
                             '<span class="card-stat">Requests <strong>' + a.request_count + '</strong></span>' +
-                            '<span class="card-stat">Errors <strong>' + a.error_count + '</strong></span>' +
+                            '<span class="card-stat">Errors <strong>' + a.error_count + '</strong>' + (a.request_count > 0 ? ' (' + (100 * a.error_count / a.request_count).toFixed(1) + '%)' : '') + '</span>' +
+                            '<span class="card-stat">Used <strong>' + relAgo(a.last_used) + '</strong></span>' +
                             (a.auto_disabled ? '<span class="card-stat">Auto-heal <strong>retrying</strong></span>' : '') +
                             '<span class="card-stat">Token <strong>' + tokenStr + '</strong></span>' +
                             '<span class="card-stat test-badge" id="test-' + a.id + '" onclick="showTestDetails(\'' + a.id + '\')">Test <strong>-</strong></span>' +
@@ -1068,6 +1082,9 @@ async function loadCacheStats() {
         var c = (await res.json()).cache || {};
         document.getElementById('cc-hits').textContent = c.hits != null ? c.hits : '—';
         document.getElementById('cc-misses').textContent = c.misses != null ? c.misses : '—';
+        var hr = (c.hits != null && c.misses != null && (c.hits + c.misses) > 0)
+            ? (100 * c.hits / (c.hits + c.misses)).toFixed(2) + '%' : '—';
+        document.getElementById('cc-hitrate').textContent = hr;
         document.getElementById('cc-stale').textContent = c.stale != null ? c.stale : '—';
         document.getElementById('cc-negative').textContent = c.negative != null ? c.negative : '—';
     } catch(e) {}
@@ -1087,6 +1104,17 @@ async function loadRequestLog() {
             ep += '<span>' + esc(e.endpoint) + ' <strong>×' + e.hits + '</strong></span>';
         }
         document.getElementById('rq-endpoints').innerHTML = ep;
+        var st = '';
+        var codes = Object.keys(r.by_status || {}).sort(function(a, b) { return Number(a) - Number(b); });
+        for (var ci = 0; ci < codes.length; ci++) {
+            st += '<span>' + esc(codes[ci]) + ' <strong>×' + r.by_status[codes[ci]] + '</strong></span>';
+        }
+        document.getElementById('rq-statuses').innerHTML = st ? '<span style="color:#5f6f60">status:</span> ' + st : '';
+        var ee = '';
+        for (var x of (r.errors_by_endpoint || []).slice(0, 5)) {
+            ee += '<span>' + esc(x.endpoint) + ' <strong>×' + x.errors + '</strong></span>';
+        }
+        document.getElementById('rq-err-endpoints').innerHTML = ee ? '<span style="color:#5f6f60">err:</span> ' + ee : '';
         var tt = '';
         for (var t of (r.top_tracks || []).slice(0, 5)) {
             tt += '<span>#' + esc(t.id) + ' <strong>×' + t.hits + '</strong></span>';
