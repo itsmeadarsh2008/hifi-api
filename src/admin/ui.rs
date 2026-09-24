@@ -1,7 +1,32 @@
-use axum::response::Html;
+use axum::extract::Path;
+use axum::http::{header, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
 
 pub async fn admin_index() -> Html<&'static str> {
     Html(ADMIN_HTML)
+}
+
+/// Vendored xterm.js assets (MIT, headers retained in-file) for the live
+/// log terminal. Served as separate cacheable files; only these exact
+/// names resolve (no path traversal).
+const XTERM_JS: &str = include_str!("assets/xterm.js");
+const XTERM_CSS: &str = include_str!("assets/xterm.css");
+const FIT_JS: &str = include_str!("assets/addon-fit.js");
+
+fn asset_resp(content_type: &str, body: &'static str) -> Response {
+    let mut headers = header::HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    headers.insert(header::CACHE_CONTROL, "public, max-age=86400".parse().unwrap());
+    (StatusCode::OK, headers, body).into_response()
+}
+
+pub async fn admin_asset(Path(file): Path<String>) -> Response {
+    match file.as_str() {
+        "xterm.js" => asset_resp("text/javascript; charset=utf-8", XTERM_JS),
+        "xterm.css" => asset_resp("text/css; charset=utf-8", XTERM_CSS),
+        "addon-fit.js" => asset_resp("text/javascript; charset=utf-8", FIT_JS),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 const ADMIN_HTML: &str = r#"<!DOCTYPE html>
@@ -10,6 +35,7 @@ const ADMIN_HTML: &str = r#"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HiFi API Admin</title>
+<link rel="stylesheet" href="assets/xterm.css">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,Monaco,Consolas,monospace; background:#0d1117; color:#c9d1d9; padding:20px; }
@@ -167,33 +193,12 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .term-meta { display:flex; gap:16px; flex-wrap:wrap; padding:9px 14px; border-bottom:1px solid #142114; font-family:monospace; font-size:11px; color:#5f6f60; }
 .term-meta strong { color:#9fe8b4; font-weight:600; }
 .term-meta .card-stat { font-size:11px; }
-.term-body { font-family:'SF Mono','Fira Code',Menlo,Consolas,monospace; font-size:12px; line-height:1.75; padding:12px 14px; height:280px; overflow-y:auto; color:#c9e8d2; scrollbar-width:thin; scrollbar-color:#1d3a24 transparent; }
-.term-body::-webkit-scrollbar { width:8px; }
-.term-body::-webkit-scrollbar-thumb { background:#1d3a24; border-radius:4px; }
-.term-line { white-space:nowrap; }
-.log-row { border-bottom:1px solid #142114; }
-.log-main { display:flex; align-items:center; gap:10px; width:100%; background:none; border:none; font:inherit; color:inherit; text-align:left; padding:7px 14px; cursor:pointer; }
-.log-main:hover { background:rgba(63,185,80,0.05); }
-.log-main:focus-visible { outline:2px solid #1f6feb; outline-offset:-2px; }
-.log-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-.log-dot.ok { background:#3fb950; box-shadow:0 0 6px rgba(63,185,80,.6); }
-.log-dot.warn { background:#d29922; box-shadow:0 0 6px rgba(210,153,34,.6); }
-.log-dot.err { background:#f85149; box-shadow:0 0 6px rgba(248,81,73,.6); }
-.log-summary { color:#e6f5ea; font-weight:600; }
-.log-meta { margin-left:auto; color:#5f6f60; font-size:11px; white-space:nowrap; padding-left:12px; }
-.log-detail { display:none; padding:2px 14px 9px 32px; color:#5f6f60; font-size:11px; }
-.term-time { color:#4a5a4c; }
-.term-method { font-weight:700; }
-.m-GET { color:#3fb950; }
-.m-POST { color:#58a6ff; }
-.m-PUT { color:#d29922; }
-.m-PATCH { color:#d2a8ff; }
-.m-DELETE { color:#f85149; }
-.term-path { color:#e6f5ea; }
-.term-id { color:#d2a8ff; }
-.term-dim { color:#5f6f60; }
-.term-cursor { display:inline-block; width:8px; height:14px; background:#3fb950; vertical-align:-2px; animation:termBlink 1.1s infinite; }
-@media (max-width:768px) { .term-body { height:220px; font-size:11px; } }
+.term-body { font-family:'SF Mono','Fira Code',Menlo,Consolas,monospace; font-size:12px; line-height:1.75; padding:10px 12px; height:400px; overflow:hidden; color:#c9e8d2; }
+.term-body .xterm-viewport { scrollbar-width:thin; scrollbar-color:#1d3a24 transparent; }
+.term-body .xterm-viewport::-webkit-scrollbar { width:8px; }
+.term-body .xterm-viewport::-webkit-scrollbar-thumb { background:#1d3a24; border-radius:4px; }
+.term-fallback { padding:12px 14px; font-size:12px; color:#5f6f60; }
+@media (max-width:768px) { .term-body { height:300px; font-size:11px; } }
 </style>
 </head>
 <body>
@@ -371,7 +376,69 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 </div>
 
+<script src="assets/xterm.js"></script>
+<script src="assets/addon-fit.js"></script>
 <script>
+/* Live log terminal (xterm.js, vendored). Rows render as ANSI text;
+   filters/search apply to the fetched window before writing. */
+var _term = null, _fit = null;
+function initTerm() {
+    try {
+        if (typeof Terminal === 'undefined') return false;
+        var el = document.getElementById('rq-recent');
+        if (!el) return false;
+        _term = new Terminal({
+            convertEol: true,
+            scrollback: 1000,
+            fontFamily: "'SF Mono','Cascadia Code',Menlo,Consolas,monospace",
+            fontSize: 12,
+            cursorBlink: true,
+            theme: {
+                background: '#060a08',
+                foreground: '#c9e8d2',
+                cursor: '#3fb950',
+                selectionBackground: 'rgba(63,185,80,0.3)',
+                black: '#060a08',
+                red: '#f85149',
+                green: '#3fb950',
+                yellow: '#d29922',
+                blue: '#58a6ff',
+                magenta: '#d2a8ff',
+                cyan: '#39c5cf',
+                white: '#c9e8d2',
+                brightBlack: '#5f6f60',
+                brightRed: '#ff7b72',
+                brightGreen: '#9fe8b4',
+                brightYellow: '#e8c36a',
+                brightBlue: '#79c0ff',
+                brightMagenta: '#d2a8ff',
+                brightCyan: '#39c5cf',
+                brightWhite: '#e6f5ea'
+            }
+        });
+        _term.open(el);
+        try {
+            if (window.FitAddon && window.FitAddon.FitAddon) {
+                _fit = new window.FitAddon.FitAddon();
+                _term.loadAddon(_fit);
+                _fit.fit();
+            }
+        } catch (e) {}
+        return true;
+    } catch (e) { return false; }
+}
+var _termOk = initTerm();
+window.addEventListener('resize', function() { try { if (_fit) _fit.fit(); } catch (e) {} });
+
+/* Strip control chars (incl. ANSI + bidi overrides): log fields carry
+   user-influenced text (search queries) that must never drive the terminal. */
+function tSan(s) {
+    return String(s == null ? '' : s).replace(/[\x00-\x1b\x7f-\x9f\u202a-\u202e]/g, '');
+}
+var ANSI = {
+    reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
+    green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m', gray: '\x1b[90m'
+};
 var API = window.location.origin;
 var adminKey = localStorage.getItem('admin_key') || '';
 var editId = null;
@@ -1181,48 +1248,43 @@ function humanStatus(status) {
     return { word: 'rejected (' + status + ')', dot: 'warn' };
 }
 
-function toggleLogRow(el) {
-    var d = el.nextElementSibling;
-    if (d && d.classList && d.classList.contains('log-detail')) {
-        var open = (d.style.display === 'none' || !d.style.display);
-        d.style.display = open ? 'block' : 'none';
-        try { el.setAttribute('aria-expanded', open ? 'true' : 'false'); } catch(e) {}
-    }
+function termWriteRow(q) {
+    if (!_term) return;
+    var st = humanStatus(q.status);
+    var col = st.dot === 'ok' ? ANSI.green : (st.dot === 'err' ? ANSI.red : ANSI.yellow);
+    var subj = q.detail ? (q.path === '/search/' ? ' \u201c' + q.detail + '\u201d' : ' #' + q.detail) : '';
+    var when = q.ts ? relAgo(q.ts) : '';
+    _term.writeln(col + '\u25cf' + ANSI.reset + ' ' + ANSI.bold + tSan(humanEndpoint(q.path)) + tSan(subj) + ANSI.reset
+        + ' ' + ANSI.gray + tSan(st.word) + ' \u00b7 ' + q.latency_ms + 'ms \u00b7 ' + when + (q.cache ? ' \u00b7 [' + tSan(q.cache) + ']' : '') + ANSI.reset);
+    _term.writeln('  ' + ANSI.gray + tSan(q.method) + ' ' + tSan(q.path) + ' \u2192 ' + q.status + ' \u00b7 ' + q.latency_ms + 'ms \u00b7 ' + tSan(q.client_ip) + (q.cache ? ' \u00b7 cache ' + tSan(q.cache) : '') + ANSI.reset);
 }
 
 function renderLogRows() {
     var r = window._rq || {};
     var box = document.getElementById('rq-recent');
     if (!box) return;
+    if (!_term && !initTerm()) {
+        box.innerHTML = '<div class="term-fallback">Terminal assets failed to load — check network and reload.</div>';
+        return;
+    }
     var filter = 'all', query = '';
     try { filter = document.getElementById('rq-filter').value || 'all'; } catch(e) {}
     try { query = (document.getElementById('rq-search').value || '').trim().toLowerCase(); } catch(e2) {}
-    var rows = '';
     var shown = 0;
     var total = (r.recent || []).length;
+    _term.clear();
     for (var q of (r.recent || [])) {
         if (filter === 'errors' && !(q.status >= 400)) continue;
         if (filter === 'slow' && !q.slow && !(q.latency_ms >= 3000)) continue;
         var hay = ((q.path || '') + ' ' + (q.detail || '') + ' ' + q.status).toLowerCase();
         if (query && hay.indexOf(query) === -1) continue;
         if (++shown > 200) break;
-        var st = humanStatus(q.status);
-        var subj = q.detail ? (q.path === '/search/' ? ' \u201c' + q.detail + '\u201d' : ' #' + q.detail) : '';
-        var when = q.ts ? relAgo(q.ts) : '';
-        rows += '<div class="log-row"><button type="button" class="log-main" onclick="toggleLogRow(this)" aria-expanded="false">'
-            + '<span class="log-dot ' + st.dot + '"></span>'
-            + '<span class="log-summary">' + esc(humanEndpoint(q.path)) + esc(subj) + '</span>'
-            + '<span class="log-meta">' + esc(st.word) + ' · ' + q.latency_ms + 'ms · ' + when + (q.cache ? ' · [' + esc(q.cache) + ']' : '') + '</span></button>'
-            + '<div class="log-detail" style="display:none">' + esc(q.method) + ' ' + esc(q.path) + ' → ' + q.status + ' · ' + q.latency_ms + 'ms · ' + esc(q.client_ip) + (q.cache ? ' · cache ' + esc(q.cache) : '') + '</div></div>';
+        termWriteRow(q);
     }
-    if (rows) {
-        box.innerHTML = rows;
-        box.scrollTop = 1e9;
-    } else if (total > 0) {
-        box.innerHTML = '<div class="term-line"><span class="term-dim">$ no rows match — clear search or filter…</span></div>';
-    } else {
-        box.innerHTML = '<div class="term-line"><span class="term-dim">$ waiting for traffic…</span> <span class="term-cursor"></span></div>';
+    if (shown === 0) {
+        _term.writeln(ANSI.gray + (total > 0 ? '$ no rows match \u2014 clear search or filter\u2026' : '$ waiting for traffic\u2026') + ANSI.reset);
     }
+    try { if (_fit) _fit.fit(); } catch(e3) {}
 }
 
 async function loadRequestLog() {

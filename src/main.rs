@@ -315,6 +315,8 @@ async fn main() {
         .route("/health", get(routes::health::health))
         // Admin SPA (no auth — the SPA handles auth in-browser)
         .route("/admin", get(crate::admin::ui::admin_index))
+        // Vendored terminal assets (public like the page itself)
+        .route("/admin/assets/{file}", get(crate::admin::ui::admin_asset))
         // Admin API routes (auth-protected)
         .nest("/admin", admin_api(state.clone()))
         // Innermost: response cache.
