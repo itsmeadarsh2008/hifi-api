@@ -29,7 +29,7 @@ This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences
 | **Token cache** | In-memory dict | Per-account memory + shared Redis, per-account refresh locks |
 | **Throttling** | Playback serialization + 429 retries | None — requests go straight to Tidal, unbounded, each with multi-account failover |
 | **Auth flow** | Separate Python script (tidal_auth.py) | Built-in OAuth device flow (`AUTO_SETUP=true`) |
-| **Admin panel** | External SPA | Embedded single page on Bulma v1 (vendored, dark, works fully offline) |
+| **Admin panel** | External SPA | Embedded single HTML file (rust-embed) |
 | **Concurrency** | asyncio event loop | tokio multi-threaded runtime |
 | **Deployment** | Python interpreter required | Single static binary, Docker optional |
 
