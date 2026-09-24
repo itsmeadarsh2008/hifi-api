@@ -1,6 +1,7 @@
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -24,15 +25,15 @@ pub async fn get_track(
     State(state): State<AppState>,
     Query(params): Query<TrackParams>,
 ) -> Result<Response, AppError> {
-    let op = crate::playback::PlaybackOp::Track {
-        id: params.id,
-        quality: params.quality,
-        immersive: params.immersiveaudio,
-    };
-    state.playback.dispatch(&state, op).await
+    let v = super::run_direct(
+        &state,
+        fetch_track_playback(&state, params.id, &params.quality, params.immersiveaudio),
+    )
+    .await?;
+    Ok(Json(v).into_response())
 }
 
-/// Core /track/ fetch (shared by immediate and queued execution).
+/// Core /track/ fetch (runs directly, no queue).
 pub(crate) async fn fetch_track_playback(
     state: &AppState,
     id: i64,
@@ -398,13 +399,12 @@ pub async fn get_track_manifests(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost")
         .to_string();
-    let op = crate::playback::PlaybackOp::Manifest {
-        track_id,
-        params,
-        raw_query: query,
-        host,
-    };
-    state.playback.dispatch(&state, op).await
+    let v = super::run_direct(
+        &state,
+        fetch_manifest_inner(&state, &track_id, &params, &host, query.as_deref()),
+    )
+    .await?;
+    Ok(Json(v).into_response())
 }
 
 // Query-based: GET /trackManifests/?id=...&formats=...  (binimum hifi-api style)
@@ -427,13 +427,12 @@ pub async fn get_track_manifests_query(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost")
         .to_string();
-    let op = crate::playback::PlaybackOp::Manifest {
-        track_id: params.id,
-        params: inner,
-        raw_query: query,
-        host,
-    };
-    state.playback.dispatch(&state, op).await
+    let v = super::run_direct(
+        &state,
+        fetch_manifest_inner(&state, &params.id, &inner, &host, query.as_deref()),
+    )
+    .await?;
+    Ok(Json(v).into_response())
 }
 
 #[cfg(test)]
@@ -533,14 +532,11 @@ pub async fn get_dash_stream(
     Path(track_id): Path<String>,
     Query(params): Query<DashParams>,
 ) -> Result<Response, AppError> {
-    let op = crate::playback::PlaybackOp::Dash {
-        track_id,
-        atmos: params.atmos,
-    };
-    state.playback.dispatch(&state, op).await
+    let uri = super::run_direct(&state, fetch_dash_uri(&state, &track_id, params.atmos.as_deref())).await?;
+    Ok(axum::response::Redirect::temporary(&uri).into_response())
 }
 
-/// Core /dash/ fetch returning the manifest URI (shared by queued execution).
+/// Core /dash/ fetch returning the manifest URI (runs directly, no queue).
 pub(crate) async fn fetch_dash_uri(
     state: &AppState,
     track_id: &str,

@@ -1,5 +1,6 @@
 use axum::extract::{Query, State};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -25,16 +26,15 @@ pub async fn get_video(
     State(state): State<AppState>,
     Query(params): Query<VideoParams>,
 ) -> Result<Response, AppError> {
-    let op = crate::playback::PlaybackOp::Video {
-        id: params.id,
-        quality: params.quality,
-        mode: params.mode,
-        presentation: params.presentation,
-    };
-    state.playback.dispatch(&state, op).await
+    let v = super::run_direct(
+        &state,
+        fetch_video_playback(&state, params.id, &params.quality, &params.mode, &params.presentation),
+    )
+    .await?;
+    Ok(Json(v).into_response())
 }
 
-/// Core /video/ fetch (shared by immediate and queued execution).
+/// Core /video/ fetch (runs directly, no queue).
 /// Fails over across playback accounts like the other playback routes so
 /// one bad/banned account neither pins the load nor fails the request.
 pub(crate) async fn fetch_video_playback(

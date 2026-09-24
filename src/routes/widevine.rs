@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, Method};
-use axum::response::Response;
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
 
 use crate::error::AppError;
 use crate::AppState;
@@ -19,15 +19,16 @@ pub async fn widevine_proxy(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
-    let op = crate::playback::PlaybackOp::Widevine {
-        method: method.to_string(),
-        content_type: Some(content_type),
-        body: body.to_vec(),
-    };
-    state.playback.dispatch(&state, op).await
+    let (status, ct, out) = super::run_direct(
+        &state,
+        fetch_widevine_license(&state, &method.to_string(), Some(content_type.as_str()), &body),
+    )
+    .await?;
+    let code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+    Ok((code, [("Content-Type", ct.as_str())], Bytes::from(out)).into_response())
 }
 
-/// Core /widevine/ fetch (shared by immediate and queued execution).
+/// Core /widevine/ fetch (runs directly, no queue).
 /// Returns (status, content_type, body). Fails over across playback
 /// accounts on retryable statuses so widevine load spreads and one
 /// banned account doesn't fail the request.

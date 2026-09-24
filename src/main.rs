@@ -7,7 +7,6 @@ mod db;
 mod error;
 mod cache;
 mod notifier;
-mod playback;
 mod proxy_manager;
 mod settings;
 mod request_log;
@@ -18,6 +17,7 @@ mod token_manager;
 mod upstash;
 
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -45,7 +45,9 @@ pub struct AppState {
     pub tidal_client: Arc<tidal_client::TidalClient>,
     pub proxy_manager: Arc<proxy_manager::ProxyManager>,
     pub notifier: Arc<notifier::Notifier>,
-    pub playback: Arc<playback::PlaybackQueue>,
+    /// Live playback ops right now (no queue exists; every request runs
+    /// directly). Feeds the panel's Playback card.
+    pub playback_inflight: Arc<AtomicU64>,
     pub cache: Arc<cache::ResponseCache>,
     pub settings: Arc<settings::AppSettings>,
     pub request_log: Arc<request_log::RequestLog>,
@@ -258,7 +260,7 @@ async fn main() {
         notifier: notifier.clone(),
         tidal_client: tidal_client.clone(),
         proxy_manager: proxy_manager.clone(),
-        playback: Arc::new(playback::PlaybackQueue::new()),
+        playback_inflight: Arc::new(AtomicU64::new(0)),
         cache: Arc::new(cache::ResponseCache::new()),
         settings: settings.clone(),
         request_log: Arc::new(request_log::RequestLog::new()),
@@ -311,10 +313,6 @@ async fn main() {
         .route("/topvideos/", get(routes::topvideos::get_top_videos))
         .route("/video/", get(routes::video::get_video))
         .route("/health", get(routes::health::health))
-        .route(
-            "/playback/requests/{request_id}",
-            get(playback::get_playback_request).delete(playback::cancel_playback_request),
-        )
         // Admin SPA (no auth — the SPA handles auth in-browser)
         .route("/admin", get(crate::admin::ui::admin_index))
         // Admin API routes (auth-protected)
@@ -494,7 +492,6 @@ fn admin_api(state: AppState) -> Router<AppState> {    Router::new()
         .route("/alerts/report", post(crate::admin::alerts::alert_report))
         .route("/cache", get(crate::admin::cache::cache_stats))
         .route("/cache/clear", post(crate::admin::cache::cache_clear))
-        .route("/playback/clear", post(crate::playback::clear_playback_queue))
         .route("/keys", get(crate::admin::api_keys::list_keys).post(crate::admin::api_keys::create_key))
         .route("/keys/{id}", delete(crate::admin::api_keys::remove_key))
         .route("/keys/{id}/toggle", put(crate::admin::api_keys::toggle_key))

@@ -23,7 +23,14 @@ pub async fn get_stats(
         .count();
     let playback_count = state.account_manager.playback_count().await;
     let pool = state.account_manager.playback_slots().await;
-    let playback = state.playback.stats(pool).await;
+    // No queue exists: every playback request runs directly. Same card
+    // shape as before (active live ops / pool size, nothing queued).
+    let playback = json!({
+        "pool_size": pool,
+        "active": state.playback_inflight.load(std::sync::atomic::Ordering::Relaxed),
+        "pending": 0,
+        "jobs": 0,
+    });
     let catalog = if !state.config.catalog_token.is_empty() {
         json!({"mode": "static_token"})
     } else if let Some(acc) = state.account_manager.find_catalog_account().await {

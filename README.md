@@ -8,7 +8,7 @@
 
 </div>
 
-`hifi-api` is a Rust port of the original [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi) / [binimum/hifi-api](https://github.com/binimum/hifi-api) project — a Tidal Music Proxy with intelligent multi-account switching, playback queueing, a catalog/metadata credential split, and a secure admin panel.
+`hifi-api` is a Rust port of the original [sachinsenal0x64/hifi](https://github.com/sachinsenal0x64/hifi) / [binimum/hifi-api](https://github.com/binimum/hifi-api) project — a Tidal Music Proxy with intelligent multi-account switching, direct instant playback, a catalog/metadata credential split, and a secure admin panel.
 
 ## What's different from binimum/hifi-api?
 
@@ -24,10 +24,10 @@ This is a complete rewrite from Python (FastAPI) to Rust (Axum). Key differences
 | **Memory** | ~100-200 MB idle | ~5-15 MB idle |
 | **Startup time** | ~2-5 seconds (import overhead) | ~100ms (compiled binary) |
 | **Concurrent connections** | ~50-100 per instance (async Python, GIL-bound) | ~5,000-10,000 concurrent tasks per instance (tokio M:N threading, no GIL)¹ |
-| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate) with immediate failover across accounts, playback queue (one request per account at a time, `202` + polling when saturated), dedicated catalog credential for metadata |
-| **Request distribution** | Full requests, one account at a time | Weighted per-request selection across accounts; playback requests queue when all accounts are busy instead of failing |
+| **Ban avoidance** | Basic round-robin across accounts | Weighted scoring (balance + recency + error-rate) with immediate failover across accounts, dedicated catalog credential for metadata |
+| **Request distribution** | Full requests, one account at a time | Weighted per-request selection across accounts; every playback request runs immediately, spread evenly — no queue, no polling |
 | **Token cache** | In-memory dict | Per-account memory + shared Redis, per-account refresh locks |
-| **Throttling** | Playback serialization + 429 retries | None — requests go straight to Tidal; playback concurrency is bounded by account count with a pollable queue (see [`GET /playback/requests/{request_id}`](#get-playbackrequestsrequest_id--delete-playbackrequestsrequest_id)) |
+| **Throttling** | Playback serialization + 429 retries | None — requests go straight to Tidal, unbounded, each with multi-account failover |
 | **Auth flow** | Separate Python script (tidal_auth.py) | Built-in OAuth device flow (`AUTO_SETUP=true`) |
 | **Admin panel** | External SPA | Embedded single HTML file (rust-embed) |
 | **Concurrency** | asyncio event loop | tokio multi-threaded runtime |
@@ -154,7 +154,7 @@ Access at `/admin`. If `ADMIN_KEY` is set, include the header `X-Admin-Key: <you
 No per-IP or upstream rate limiting is applied — every request goes straight to Tidal:
 
 1. **Weighted account selection** — each request picks the best playback account by usage balance, recency, and error rate, and fails over to the next account on `429`/`403`/token errors instead of parking it.
-2. **Playback queue** — `/track`, `/trackManifests`, `/dash`, `/widevine` and `/video` are serialized to one request per playback account at a time (upstream parity). When every slot is busy the request becomes a pollable job: `202 Accepted` with `Location: /playback/requests/{id}` plus `Retry-After` and `X-Playback-Queue-Position` headers. Poll `GET` for the result, `DELETE` to cancel. Backpressure: the queue is capped at 1× pool size (20 accounts → max 20 waiting) and sheds with `503` + `Retry-After`, so requests run instantly or fail fast instead of parking thousands deep; queued jobs nobody polls for 60s expire as abandoned; each op times out after 120s so a stuck upstream can't wedge a slot. `POST /admin/playback/clear` (panel button included) drains the queue in an emergency. See [`GET /playback/requests/{request_id}`](#get-playbackrequestsrequest_id--delete-playbackrequestsrequest_id).
+2. **Direct playback (no queue)** — `/track`, `/trackManifests`, `/dash`, `/widevine` and `/video` execute immediately: every request runs straight through to Tidal with the normal multi-account failover, spread evenly across accounts by weighted selection. Nothing waits, nothing polls — the panel's Playback card shows live ops vs pool size. Each op is bounded by a 120s timeout.
 3. **Catalog split** — metadata routes (`/info`, `/search`, `/album`, `/artist`, `/mix`, `/playlist`, `/cover`, `/lyrics`, `/topvideos`, …) prefer a dedicated catalog credential when configured (`CATALOG_TOKEN` or a `CATALOG_*`/catalog-flagged account), falling back to the pool. Catalog accounts never serve playback.
 
 Identical concurrent metadata requests (e.g. ten users hitting the same search) are coalesced into one upstream call. Metadata responses are cached for an hour, then served stale for another hour while a background refresh runs (so expiry never causes a user-facing miss); repeat errors are cached briefly (404s for 60s, 429/5xx for 15s). Cache keys are canonicalized, so encoding or param-order variants of the same request share one entry. Watch `X-Cache` (`HIT`/`STALE`/`NEGATIVE`/`MISS`) and the Cache card (hits, misses, stale, negative).
@@ -176,7 +176,7 @@ What gets shared:
 | Account credentials | Write-through on add/edit/toggle/catalog-flag; union-merged at startup + every 60s (newest `updated_at` wins, live counters and catalog flags preserved) — a wiped host restores its accounts from Redis; explicit deletes stay deleted; backup restores win via republish |
 | API-key definitions | Same pattern (hashes/flags/quota only — raw keys are never stored anywhere) |
 
-Without these vars everything stays local (today's single-host behavior). All Redis calls are fail-open with short timeouts: if Redis is unreachable the instance keeps serving from local state. Intentionally **not** synced: the metadata response cache (per-host L1), playback queue jobs, request log, proxy state. Note that anyone holding the Redis REST token can read the backed-up Tidal credentials — guard it like database access.
+Without these vars everything stays local (today's single-host behavior). All Redis calls are fail-open with short timeouts: if Redis is unreachable the instance keeps serving from local state. Intentionally **not** synced: the metadata response cache (per-host L1), request log, proxy state. Note that anyone holding the Redis REST token can read the backed-up Tidal credentials — guard it like database access.
 
 ### Preview-only tracks
 
@@ -1770,26 +1770,4 @@ https://im-fa.manifest.tidal.com/1/manifests/CAESCDQ4MjA0MTA2GAEiFldFanZRQnRnTGF
 
 ### `GET /playback/requests/{request_id}` / `DELETE /playback/requests/{request_id}`
 
-Upstream parity with `binimum/hifi-api`: playback traffic (`/track`, `/trackManifests`, `/dash`, `/widevine`, `/video`) is serialized — each playback account serves one request at a time. When all slots are busy the request becomes a pollable job instead of failing:
-
-```http
-HTTP/1.1 202 Accepted
-Location: /playback/requests/9d30c907688a41ab864df002ffcd6248
-Retry-After: 1
-X-Playback-Queue-Position: 2
-X-Playback-Request-Id: 9d30c907688a41ab864df002ffcd6248
-```
-
-```json
-{
-  "status": "pending",
-  "requestId": "9d30c907688a41ab864df002ffcd6248",
-  "queuePosition": 2,
-  "statusUrl": "/playback/requests/9d30c907688a41ab864df002ffcd6248",
-  "cancelUrl": "/playback/requests/9d30c907688a41ab864df002ffcd6248",
-  "playbackAccounts": 7,
-  "activePlaybackRequests": 7
-}
-```
-
-Poll `GET` until it returns the result (or a failure with its upstream status). `DELETE` cancels a pending/processing job (`410` once cancelled). Jobs expire 300s after finishing. Inside its slot each job still uses the normal multi-account failover.
+Removed: playback requests execute directly with no queue, so these endpoints no longer exist (stale polls get `404` — just re-request the track). Each request still uses the normal multi-account failover, bounded by a 120s op timeout.
