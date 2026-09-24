@@ -1,16 +1,32 @@
-use axum::response::Html;
+use axum::http::header;
+use axum::response::{Html, IntoResponse};
 
 pub async fn admin_index() -> Html<&'static str> {
     Html(ADMIN_HTML)
 }
 
+/// Vendored Bulma v1 CSS (MIT, full header retained in-file). Served as a
+/// separate cacheable asset so the HTML stays small and browsers cache it.
+const BULMA_CSS: &str = include_str!("assets/bulma.min.css");
+
+pub async fn admin_asset() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        BULMA_CSS,
+    )
+}
+
 const ADMIN_HTML: &str = r##"<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
 <title>HiFi API Admin</title>
+<link rel="stylesheet" href="assets/bulma.min.css">
 <style>
 /* Original HiFi design system — no frameworks, no external requests. */
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -32,16 +48,11 @@ body { font-family:var(--font-ui); background:radial-gradient(1200px 600px at 80
 .brand-mark { width:30px; height:30px; border-radius:9px; background:conic-gradient(from 210deg,var(--accent),var(--blue),var(--green),var(--accent)); box-shadow:0 0 18px rgba(124,108,245,.45); flex-shrink:0; }
 .brand-name { font-weight:700; font-size:15px; letter-spacing:-0.2px; }
 .brand-sub { font-size:10.5px; color:var(--ink-faint); letter-spacing:0.4px; }
-.nav-label { font-size:10px; text-transform:uppercase; letter-spacing:1.1px; color:var(--ink-faint); padding:14px 10px 6px; }
-.nav a { display:flex; align-items:center; gap:10px; color:var(--ink-dim); text-decoration:none; font-size:13px; font-weight:500; padding:8px 10px; border-radius:var(--r-sm); border:1px solid transparent; transition:all 0.15s; }
-.nav a:hover { color:var(--ink); background:rgba(124,108,245,.08); border-color:rgba(124,108,245,.18); }
-.nav a::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--ink-faint); flex-shrink:0; transition:all 0.15s; }
-.nav a:hover::before { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+.side .menu { font-size:13px; }
+.side .menu-label { font-size:10px; letter-spacing:1.1px; }
+.side .menu-list a { border-radius:var(--r-sm); border:1px solid transparent; }
+.side .menu-list a:hover { background:rgba(124,108,245,.08); border-color:rgba(124,108,245,.18); }
 .side-foot { margin-top:auto; padding:14px 10px 0; font-size:11px; color:var(--ink-faint); border-top:1px solid var(--line-soft); }
-.main { min-width:0; padding:26px 30px 20px; max-width:1060px; }
-.topbar { position:sticky; top:0; z-index:50; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:-26px -30px 26px; padding:16px 30px; background:rgba(8,11,17,.78); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border-bottom:1px solid var(--line-soft); }
-.topbar h1 { font-size:19px; font-weight:700; letter-spacing:-0.3px; margin:0; }
-.topbar .actions { display:flex; gap:8px; align-items:center; }
 .main { min-width:0; padding:26px 30px 20px; max-width:1060px; }
 section[id] { scroll-margin-top:18px; }
 .sec-head { display:flex; align-items:baseline; justify-content:space-between; margin:2px 0 14px; }
@@ -68,10 +79,11 @@ section[id] { scroll-margin-top:18px; }
 .account-card { background:var(--bg2); border:1px solid var(--line-soft); border-radius:var(--r-lg); overflow:hidden; transition:border-color 0.2s, box-shadow 0.25s, transform 0.2s; }
 .account-card:hover { border-color:var(--line); box-shadow:0 12px 36px rgba(0,0,0,0.4); }
 
-.card-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:linear-gradient(180deg,var(--bg3) 0%,var(--bg2) 100%); border-bottom:1px solid var(--line-soft); flex-wrap:wrap; gap:10px; }
+.card-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:linear-gradient(180deg,var(--bg3) 0%,var(--bg2) 100%); border-bottom:1px solid var(--line-soft); box-shadow:none; flex-wrap:wrap; gap:10px; }
 .card-header .left { display:flex; align-items:center; gap:10px; min-width:0; }
 .acc-num { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px; padding:0 7px; border-radius:8px; background:var(--accent-soft); border:1px solid rgba(124,108,245,.3); color:var(--accent); font-size:11px; font-weight:700; flex-shrink:0; }
-.card-header .label { font-weight:650; font-size:14px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* NOTE: Bulma styles .label as block form labels — account names need inline. */
+.card-header .label { display:inline; font-weight:650; font-size:14px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .card-body { padding:18px 20px; }
 .cred-row { display:flex; align-items:baseline; gap:8px; padding:8px 0; font-size:12px; }
@@ -115,11 +127,7 @@ section[id] { scroll-margin-top:18px; }
 .form-row.full { grid-template-columns:1fr; }
 .pw-wrap { position:relative; }
 .pw-wrap input { padding-right:38px; }
-.form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
-.form-row.full { grid-template-columns:1fr; }
-.pw-wrap { position:relative; }
-.pw-wrap input { padding-right:38px; }
-.pw-toggle { position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:#8b949e; cursor:pointer; font-size:15px; padding:4px 6px; line-height:1; }
+.pw-toggle { position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:#8b949e; cursor:pointer; font-size:15px; padding:4px 6px; line-height:1; z-index:5; }
 .pw-toggle:hover { color:#f0f6fc; }
 
 .error { color:var(--red); font-size:13px; margin-bottom:10px; padding:10px 14px; background:rgba(248,113,113,0.08); border:1px solid rgba(248,113,113,0.25); border-radius:var(--r-sm); }
@@ -128,13 +136,13 @@ section[id] { scroll-margin-top:18px; }
 
 .overlay { display:none; position:fixed; inset:0; background:rgba(4,6,10,0.7); z-index:100; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
 .overlay.open { display:flex; align-items:center; justify-content:center; }
-.modal { background:var(--bg2); border:1px solid var(--line); border-radius:var(--r-lg); padding:26px; width:520px; max-width:92vw; max-height:90vh; overflow-y:auto; scrollbar-width:none; animation:modalIn 0.22s cubic-bezier(0.2,0.9,0.3,1.2); box-shadow:0 24px 80px rgba(0,0,0,0.5); }
-.modal::-webkit-scrollbar { display:none; }
+.sheet { background:var(--bg2); border:1px solid var(--line); border-radius:var(--r-lg); padding:26px; width:520px; max-width:92vw; max-height:90vh; overflow-y:auto; scrollbar-width:none; animation:modalIn 0.22s cubic-bezier(0.2,0.9,0.3,1.2); box-shadow:0 24px 80px rgba(0,0,0,0.5); }
+.sheet::-webkit-scrollbar { display:none; }
 @keyframes modalIn { from { opacity:0; transform:scale(0.95) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
-.modal h3 { font-size:17px; margin-bottom:20px; color:#f0f6fc; }
-.modal .form-group { margin-bottom:16px; }
-.modal .modal-actions { display:flex; gap:10px; margin-top:18px; }
-.modal .modal-actions .btn { padding:8px 20px; font-size:13px; }
+.sheet h3 { font-size:17px; margin-bottom:20px; color:#f0f6fc; }
+.sheet .form-group { margin-bottom:16px; }
+.sheet .sheet-actions { display:flex; gap:10px; margin-top:18px; }
+.sheet .sheet-actions .btn { padding:8px 20px; font-size:13px; }
 
 .empty-state { text-align:center; padding:48px 20px; color:#8b949e; }
 .empty-state p { font-size:15px; margin-bottom:6px; }
@@ -192,7 +200,7 @@ section[id] { scroll-margin-top:18px; }
 
 @media (max-width:480px) {
   .stats { grid-template-columns:1fr; }
-  .modal { padding:20px; max-width:96vw; }
+  .sheet { padding:20px; max-width:96vw; }
 }
 
 @keyframes highlightPulse { 0%,100% { border-color:#30363d; } 50% { border-color:#58a6ff; box-shadow:0 0 20px rgba(88,166,255,0.15); } }
@@ -233,25 +241,27 @@ section[id] { scroll-margin-top:18px; }
 <div class="shell">
 <aside class="side">
 <div class="brand"><span class="brand-mark"></span><span><span class="brand-name">HiFi Admin</span><br><span class="brand-sub" id="version">v2.10</span></span></div>
-<div class="nav-label">Monitor</div>
-<nav class="nav">
-<a href="#sec-overview">Overview</a>
-<a href="#sec-requests">Requests</a>
-<a href="#sec-accounts">Accounts</a>
+<nav class="menu" aria-label="Admin sections">
+<p class="menu-label">Monitor</p>
+<ul class="menu-list">
+<li><a href="#sec-overview">Overview</a></li>
+<li><a href="#sec-requests">Requests</a></li>
+<li><a href="#sec-accounts">Accounts</a></li>
+</ul>
+<p class="menu-label">Manage</p>
+<ul class="menu-list">
+<li><a href="#sec-add">Add account</a></li>
+<li><a href="#sec-import">Import / Export</a></li>
+<li><a href="#sec-settings">Settings</a></li>
+<li><a href="#sec-proxies">Proxies</a></li>
+<li><a href="#sec-alerts">Alerts</a></li>
+<li><a href="#sec-keys">API keys</a></li>
+<li><a href="#sec-backup">Backup</a></li>
+<li><a href="#sec-cache">Cache</a></li>
+<li><a href="#sec-tests">Tests</a></li>
+</ul>
 </nav>
-<div class="nav-label">Manage</div>
-<nav class="nav">
-<a href="#sec-add">Add account</a>
-<a href="#sec-import">Import / Export</a>
-<a href="#sec-settings">Settings</a>
-<a href="#sec-proxies">Proxies</a>
-<a href="#sec-alerts">Alerts</a>
-<a href="#sec-keys">API keys</a>
-<a href="#sec-backup">Backup</a>
-<a href="#sec-cache">Cache</a>
-<a href="#sec-tests">Tests</a>
-</nav>
-<div class="side-foot"><button class="btn btn-primary" onclick="testAll()" id="testAllBtn" style="width:100%">Test All</button></div>
+<div class="side-foot"><button class="button is-primary is-fullwidth" onclick="testAll()" id="testAllBtn">Test All</button></div>
 </aside>
 <main class="main">
 <div id="error" class="error"></div>
@@ -271,7 +281,7 @@ section[id] { scroll-margin-top:18px; }
 <span id="rq-err-endpoints" style="color:#f85149"></span>
 <span id="rq-slowest" style="color:#d29922"></span>
 <span id="rq-tracks" style="color:#d2a8ff"></span>
-<span style="margin-left:auto"><label style="font-size:11px;color:#8b949e">filter <select id="rq-filter" onchange="loadRequestLog()" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:11px"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></label></span>
+<span style="margin-left:auto" class="select is-small" title="filter"><select id="rq-filter" onchange="loadRequestLog()"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
 </div></section>
@@ -279,27 +289,27 @@ section[id] { scroll-margin-top:18px; }
 <div class="form-section" id="sec-add">
 <h3>Add Account</h3>
 <div class="form-row">
-<div class="form-group"><label>Label</label><input type="text" id="new-label" placeholder="My Account"></div>
-<div class="form-group"><label>User ID (optional)</label><input type="text" id="new-user-id" placeholder="208921067"></div>
+<div class="form-group"><label class="label">Label</label><input class="input" type="text" id="new-label" placeholder="My Account"></div>
+<div class="form-group"><label class="label">User ID (optional)</label><input class="input" type="text" id="new-user-id" placeholder="208921067"></div>
 </div>
 <div class="form-row full">
-<div class="form-group"><label>Client ID</label><input type="text" id="new-client-id" placeholder="client_id"></div>
+<div class="form-group"><label class="label">Client ID</label><input class="input" type="text" id="new-client-id" placeholder="client_id"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>Client Secret</label><div class="pw-wrap"><input type="password" id="new-client-secret" placeholder="client_secret"><button type="button" class="pw-toggle" onclick="togglePw('new-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
-<div class="form-group"><label>Refresh Token</label><div class="pw-wrap"><input type="password" id="new-refresh-token" placeholder="refresh_token"><button type="button" class="pw-toggle" onclick="togglePw('new-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Client Secret</label><div class="pw-wrap"><input class="input" type="password" id="new-client-secret" placeholder="client_secret"><button type="button" class="pw-toggle" onclick="togglePw('new-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Refresh Token</label><div class="pw-wrap"><input class="input" type="password" id="new-refresh-token" placeholder="refresh_token"><button type="button" class="pw-toggle" onclick="togglePw('new-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
 </div>
-<button class="btn btn-primary" onclick="addAccount()">Add Account</button>
-<button class="btn" onclick="startOAuth()" id="oauthBtn" style="margin-left:8px">Add via OAuth</button>
-<label style="display:inline-flex;align-items:center;gap:6px;margin-left:12px;font-size:12px;color:#8b949e"><input type="checkbox" id="new-catalog" style="width:auto"> Catalog-only (metadata, never playback)</label>
+<button class="button is-primary" onclick="addAccount()">Add Account</button>
+<button class="button" onclick="startOAuth()" id="oauthBtn" style="margin-left:8px">Add via OAuth</button>
+<label class="checkbox" style="font-size:12px"><input type="checkbox" id="new-catalog"> Catalog-only (metadata, never playback)</label>
 </div>
 
 <div class="form-section" id="sec-import">
 <h3>Import / Export</h3>
 <p style="font-size:12px;color:#8b949e;margin-bottom:12px">Backup or restore all Tidal credentials as JSON. Import skips duplicates by refresh_token.</p>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
-<button class="btn" onclick="exportCredentials()">Export credentials.json</button>
-<button class="btn" onclick="document.getElementById('importFile').click()">Import credentials.json</button>
+<button class="button" onclick="exportCredentials()">Export credentials.json</button>
+<button class="button" onclick="document.getElementById('importFile').click()">Import credentials.json</button>
 <input type="file" id="importFile" accept=".json,application/json" style="display:none" onchange="importCredentials(event)">
 </div>
 <div id="importResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
@@ -308,11 +318,11 @@ section[id] { scroll-margin-top:18px; }
 <div class="form-section" id="sec-settings">
 <h3>Settings</h3>
 <div class="form-row">
-<div class="form-group"><label>Atmos default</label><select id="rl-atmos" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:10px 12px;border-radius:6px;font-size:13px"><option value="off">Off (FLAC first)</option><option value="prefer">Prefer (Atmos first)</option></select></div>
-<div class="form-group"><label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#c9d1d9"><input type="checkbox" id="rl-autoheal" style="width:auto"> Auto-heal system-disabled accounts</label></div>
+<div class="form-group"><label class="label">Atmos default</label><div class="select is-fullwidth"><select id="rl-atmos"><option value="off">Off (FLAC first)</option><option value="prefer">Prefer (Atmos first)</option></select></div></div>
+<div class="form-group"><label class="checkbox"><input type="checkbox" id="rl-autoheal"> Auto-heal system-disabled accounts</label></div>
 </div>
 <p style="font-size:11px;color:#8b949e;margin-bottom:16px">No request throttling is applied — all requests go straight to Tidal with account failover.</p>
-<button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+<button class="button is-primary" onclick="saveSettings()">Save Settings</button>
 </div>
 
 <div class="form-section" id="sec-proxies">
@@ -332,19 +342,19 @@ section[id] { scroll-margin-top:18px; }
 <span class="card-stat">Discord <strong id="al-discord">—</strong></span>
 </div>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">Notifies on account 403 (suspension risk) and all-accounts-down. Set <span style="font-family:monospace">DISCORD_WEBHOOK_URL</span> and restart to enable.</p>
-<button class="btn" onclick="testAlert()" id="alertTestBtn">Send Test Alert</button>
-<button class="btn" onclick="sendReport('status')" id="reportStatusBtn" style="margin-left:8px">Send Status</button>
-<button class="btn" onclick="sendReport('accounts')" id="reportAccountsBtn" style="margin-left:8px">Send Accounts</button>
+<button class="button" onclick="testAlert()" id="alertTestBtn">Send Test Alert</button>
+<button class="button" onclick="sendReport('status')" id="reportStatusBtn" style="margin-left:8px">Send Status</button>
+<button class="button" onclick="sendReport('accounts')" id="reportAccountsBtn" style="margin-left:8px">Send Accounts</button>
 </div>
 
 <div class="form-section" id="sec-keys">
 <h3>API Keys</h3>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">While no key exists the API stays open. Creating the first key locks all public routes behind <span style="font-family:monospace">X-API-Key</span> (or owner <span style="font-family:monospace">X-Admin-Key</span>). Quota 0 = unlimited.</p>
 <div class="form-row">
-<div class="form-group"><label>Label</label><input type="text" id="new-key-label" placeholder="My app"></div>
-<div class="form-group"><label>Quota (requests, 0 = unlimited)</label><input type="number" id="new-key-quota" min="0" placeholder="0"></div>
+<div class="form-group"><label class="label">Label</label><input class="input" type="text" id="new-key-label" placeholder="My app"></div>
+<div class="form-group"><label class="label">Quota (requests, 0 = unlimited)</label><input class="input" type="number" id="new-key-quota" min="0" placeholder="0"></div>
 </div>
-<button class="btn btn-primary" onclick="addApiKey()">Create Key</button>
+<button class="button is-primary" onclick="addApiKey()">Create Key</button>
 <div id="keyResult" style="font-size:12px;margin-top:10px;color:#3fb950;word-break:break-all"></div>
 <div id="keys-container" style="margin-top:12px"></div>
 </div>
@@ -353,8 +363,8 @@ section[id] { scroll-margin-top:18px; }
 <h3>Backup / Restore</h3>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">Download a snapshot of the database (accounts, keys, settings), or restore from one. Restore reloads everything live — no restart needed.</p>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
-<button class="btn" onclick="downloadBackup()">Download Backup</button>
-<button class="btn" onclick="document.getElementById('restoreFile').click()">Restore from File</button>
+<button class="button" onclick="downloadBackup()">Download Backup</button>
+<button class="button" onclick="document.getElementById('restoreFile').click()">Restore from File</button>
 <input type="file" id="restoreFile" accept=".db,.sqlite,.sqlite3,application/x-sqlite3" style="display:none" onchange="restoreBackup(event)">
 </div>
 <div id="restoreResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
@@ -369,7 +379,7 @@ section[id] { scroll-margin-top:18px; }
 <span class="card-stat">Stale <strong id="cc-stale">—</strong></span>
 <span class="card-stat">Negative <strong id="cc-negative">—</strong></span>
 </div>
-<button class="btn" onclick="clearCache()" id="clearCacheBtn">Clear Cache</button>
+<button class="button" onclick="clearCache()" id="clearCacheBtn">Clear Cache</button>
 </div>
 
 <section id="sec-tests" aria-label="Tests"><div class="test-results-section" id="testResultsSection" style="display:none">
@@ -384,41 +394,41 @@ section[id] { scroll-margin-top:18px; }
 </main>
 </div>
 <div id="oauthOverlay" class="overlay" onclick="if(event.target===this)closeOAuth()">
-<div class="modal">
+<div class="sheet">
 <h3>Authorize via Tidal</h3>
 <p style="margin-bottom:16px;color:#8b949e;font-size:14px">Open this URL in your browser, log into Tidal, and authorize the app.</p>
 <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:16px;word-break:break-all;font-size:13px;font-family:monospace;color:#58a6ff;margin-bottom:16px" id="oauthUrl">—</div>
-<button class="btn" onclick="copyOAuthUrl()" id="copyOAuthBtn" style="margin-right:8px">Copy URL</button>
-<button class="btn" onclick="openOAuthUrl()" id="openOAuthBtn">Open</button>
-<div class="form-group" style="margin-top:16px"><label>Label (optional — applied when authorization completes)</label><input type="text" id="oauth-modal-label" placeholder="My Tidal" oninput="updateOAuthLabel()"></div>
+<button class="button" onclick="copyOAuthUrl()" id="copyOAuthBtn" style="margin-right:8px">Copy URL</button>
+<button class="button" onclick="openOAuthUrl()" id="openOAuthBtn">Open</button>
+<div class="form-group" style="margin-top:16px"><label class="label">Label (optional — applied when authorization completes)</label><input class="input" type="text" id="oauth-modal-label" placeholder="My Tidal" oninput="updateOAuthLabel()"></div>
 <p style="margin-top:16px;color:#8b949e;font-size:13px" id="oauthStatus">Waiting for authorization...</p>
 <div class="modal-actions">
-<button class="btn" onclick="closeOAuth()">Cancel</button>
+<button class="button" onclick="closeOAuth()">Cancel</button>
 </div>
 </div>
 </div>
 
 <div id="editOverlay" class="overlay" onclick="if(event.target===this)closeEdit()">
-<div class="modal">
+<div class="sheet">
 <h3 id="editTitle">Edit Account</h3>
-<div class="form-group"><label>Label</label><input type="text" id="ed-label"></div>
-<div class="form-group"><label>User ID</label><input type="text" id="ed-user-id"></div>
-<div class="form-group"><label>Client ID</label><input type="text" id="ed-client-id"></div>
-<div class="form-group"><label>Client Secret</label><div class="pw-wrap"><input type="password" id="ed-client-secret"><button type="button" class="pw-toggle" onclick="togglePw('ed-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
-<div class="form-group"><label>Refresh Token</label><div class="pw-wrap"><input type="password" id="ed-refresh-token"><button type="button" class="pw-toggle" onclick="togglePw('ed-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Label</label><input class="input" type="text" id="ed-label"></div>
+<div class="form-group"><label class="label">User ID</label><input class="input" type="text" id="ed-user-id"></div>
+<div class="form-group"><label class="label">Client ID</label><input class="input" type="text" id="ed-client-id"></div>
+<div class="form-group"><label class="label">Client Secret</label><div class="pw-wrap"><input class="input" type="password" id="ed-client-secret"><button type="button" class="pw-toggle" onclick="togglePw('ed-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Refresh Token</label><div class="pw-wrap"><input class="input" type="password" id="ed-refresh-token"><button type="button" class="pw-toggle" onclick="togglePw('ed-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
 <div class="modal-actions">
-<button class="btn btn-primary" onclick="saveEdit()">Save</button>
-<button class="btn" onclick="closeEdit()">Cancel</button>
+<button class="button is-primary" onclick="saveEdit()">Save</button>
+<button class="button" onclick="closeEdit()">Cancel</button>
 </div>
 </div>
 </div>
 
 <div id="testOverlay" class="overlay" onclick="if(event.target===this)closeTestDetails()">
-<div class="modal" style="width:680px">
+<div class="sheet" style="width:680px">
 <h3 id="testTitle">Test Results</h3>
 <div id="testDetailsContent" style="font-size:12px;line-height:1.6;max-height:60vh;overflow-y:auto;scrollbar-width:none"></div>
 <div class="modal-actions">
-<button class="btn" onclick="closeTestDetails()">Close</button>
+<button class="button" onclick="closeTestDetails()">Close</button>
 </div>
 </div>
 </div>
