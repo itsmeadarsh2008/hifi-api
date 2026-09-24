@@ -4,87 +4,131 @@ pub async fn admin_index() -> Html<&'static str> {
     Html(ADMIN_HTML)
 }
 
-const ADMIN_HTML: &str = r#"<!DOCTYPE html>
+const ADMIN_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
 <title>HiFi API Admin</title>
 <style>
+/* Original HiFi design system — no frameworks, no external requests. */
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,Monaco,Consolas,monospace; background:#0d1117; color:#c9d1d9; padding:20px; }
-.container { max-width:1000px; margin:0 auto; padding:0 8px; }
-
-.header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
-.header h1 { font-size:22px; color:#f0f6fc; letter-spacing:-0.3px; }
-.header .badge { font-size:11px; background:#1f6feb; color:#fff; padding:3px 10px; border-radius:10px; font-weight:500; }
+:root {
+  --bg0:#080b11; --bg1:#0e131c; --bg2:#141b29; --bg3:#1b2334;
+  --line:#263049; --line-soft:#1a2233;
+  --ink:#edf0f7; --ink-dim:#a3adbf; --ink-faint:#5d6a82;
+  --accent:#7c6cf5; --accent-ink:#fff; --accent-soft:rgba(124,108,245,.14);
+  --green:#34d399; --red:#f87171; --amber:#fbbf24; --blue:#60a5fa; --purple:#c084fc;
+  --r-lg:16px; --r-md:12px; --r-sm:8px;
+  --font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,'Helvetica Neue',Arial,sans-serif;
+  --font-mono:ui-monospace,'SF Mono','Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+body { font-family:var(--font-ui); background:radial-gradient(1200px 600px at 80% -10%,rgba(124,108,245,.07),transparent 60%),var(--bg0); color:var(--ink); padding:0; min-height:100vh; font-size:14px; line-height:1.55; }
+.shell { display:grid; grid-template-columns:248px minmax(0,1fr); min-height:100vh; }
+.side { position:sticky; top:0; height:100vh; overflow-y:auto; background:rgba(14,19,28,.7); backdrop-filter:blur(10px); border-right:1px solid var(--line-soft); padding:26px 18px; display:flex; flex-direction:column; gap:6px; }
+.brand { display:flex; align-items:center; gap:11px; padding:2px 8px 18px; }
+.brand-mark { width:30px; height:30px; border-radius:9px; background:conic-gradient(from 210deg,var(--accent),var(--blue),var(--green),var(--accent)); box-shadow:0 0 18px rgba(124,108,245,.45); flex-shrink:0; }
+.brand-name { font-weight:700; font-size:15px; letter-spacing:-0.2px; }
+.brand-sub { font-size:10.5px; color:var(--ink-faint); letter-spacing:0.4px; }
+.nav-label { font-size:10px; text-transform:uppercase; letter-spacing:1.1px; color:var(--ink-faint); padding:14px 10px 6px; }
+.nav a { display:flex; align-items:center; gap:10px; color:var(--ink-dim); text-decoration:none; font-size:13px; font-weight:500; padding:8px 10px; border-radius:var(--r-sm); border:1px solid transparent; transition:all 0.15s; }
+.nav a:hover { color:var(--ink); background:rgba(124,108,245,.08); border-color:rgba(124,108,245,.18); }
+.nav a::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--ink-faint); flex-shrink:0; transition:all 0.15s; }
+.nav a:hover::before { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+.side-foot { margin-top:auto; padding:14px 10px 0; font-size:11px; color:var(--ink-faint); border-top:1px solid var(--line-soft); }
+.main { min-width:0; padding:26px 30px 20px; max-width:1060px; }
+.topbar { position:sticky; top:0; z-index:50; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:-26px -30px 26px; padding:16px 30px; background:rgba(8,11,17,.78); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border-bottom:1px solid var(--line-soft); }
+.topbar h1 { font-size:19px; font-weight:700; letter-spacing:-0.3px; margin:0; }
+.topbar .actions { display:flex; gap:8px; align-items:center; }
+.main { min-width:0; padding:26px 30px 20px; max-width:1060px; }
+section[id] { scroll-margin-top:18px; }
+.sec-head { display:flex; align-items:baseline; justify-content:space-between; margin:2px 0 14px; }
+.sec-head h2 { font-size:15px; font-weight:700; letter-spacing:-0.2px; margin:0; }
+@media (max-width:900px) {
+  .shell { grid-template-columns:1fr; }
+  .side { position:static; height:auto; border-right:none; border-bottom:1px solid var(--line-soft); padding:16px; }
+  .side .nav { display:flex; overflow-x:auto; gap:2px; padding-bottom:4px; }
+  .side .nav a { white-space:nowrap; }
+  .nav-label, .side-foot, .brand-sub { display:none; }
+  .main { padding:18px 14px; }
+}
+.footer { text-align:center; color:#5f6f60; font-size:11px; padding:24px 0 12px; }
 
 .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:24px; }
-.stat-card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:18px 20px; transition:border-color 0.2s; }
-.stat-card:hover { border-color:#484f58; }
-.stat-card .label { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; }
-.stat-card .value { font-size:26px; font-weight:700; margin-top:4px; color:#f0f6fc; letter-spacing:-0.5px; }
+.stat-card { background:linear-gradient(180deg,var(--bg3) 0%,var(--bg2) 100%); border:1px solid var(--line-soft); border-radius:var(--r-md); padding:16px 20px; transition:border-color 0.2s, transform 0.2s, box-shadow 0.2s; position:relative; overflow:hidden; }
+.stat-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent); opacity:0; transition:opacity 0.25s; }
+.stat-card:hover { border-color:var(--line); transform:translateY(-2px); box-shadow:0 12px 32px rgba(0,0,0,0.35); }
+.stat-card:hover::before { opacity:1; }
+.stat-card .label { font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.6px; font-weight:600; }
+.stat-card .value { font-size:27px; font-weight:750; margin-top:4px; color:var(--ink); letter-spacing:-0.5px; font-variant-numeric:tabular-nums; }
 
-.accounts-grid { display:flex; flex-direction:column; gap:20px; margin-bottom:24px; }
-.account-card { background:#161b22; border:1px solid #30363d; border-radius:10px; overflow:hidden; transition:border-color 0.2s, box-shadow 0.2s; }
-.account-card:hover { border-color:#484f58; box-shadow:0 4px 24px rgba(0,0,0,0.3); }
+.accounts-grid { display:flex; flex-direction:column; gap:18px; margin-bottom:24px; }
+.account-card { background:var(--bg2); border:1px solid var(--line-soft); border-radius:var(--r-lg); overflow:hidden; transition:border-color 0.2s, box-shadow 0.25s, transform 0.2s; }
+.account-card:hover { border-color:var(--line); box-shadow:0 12px 36px rgba(0,0,0,0.4); }
 
-.card-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:#1c2128; border-bottom:1px solid #30363d; flex-wrap:wrap; gap:10px; }
+.card-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:linear-gradient(180deg,var(--bg3) 0%,var(--bg2) 100%); border-bottom:1px solid var(--line-soft); flex-wrap:wrap; gap:10px; }
 .card-header .left { display:flex; align-items:center; gap:10px; min-width:0; }
-.acc-num { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px; padding:0 6px; border-radius:11px; background:#21262d; border:1px solid #30363d; color:#8b949e; font-size:11px; font-weight:700; flex-shrink:0; }
-.card-header .label { font-weight:600; font-size:14px; color:#f0f6fc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.acc-num { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px; padding:0 7px; border-radius:8px; background:var(--accent-soft); border:1px solid rgba(124,108,245,.3); color:var(--accent); font-size:11px; font-weight:700; flex-shrink:0; }
+.card-header .label { font-weight:650; font-size:14px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .card-body { padding:18px 20px; }
 .cred-row { display:flex; align-items:baseline; gap:8px; padding:8px 0; font-size:12px; }
 .cred-row:last-child { padding-bottom:0; }
-.cred-key { color:#8b949e; min-width:120px; user-select:none; flex-shrink:0; }
-.cred-key::after { content:'='; margin-left:4px; color:#30363d; }
-.cred-value { color:#c9d1d9; word-break:break-all; min-width:0; }
-.cred-value.masked { color:#58a6ff; }
-.cred-value.token { color:#d2a8ff; font-size:11px; }
+.cred-key { color:var(--ink-dim); min-width:120px; user-select:none; flex-shrink:0; }
+.cred-key::after { content:'='; margin-left:4px; color:var(--line); }
+.cred-value { color:var(--ink); word-break:break-all; min-width:0; font-family:var(--font-mono); font-size:12px; }
+.cred-value.masked { color:var(--blue); }
+.cred-value.token { color:var(--purple); font-size:11px; }
 
-.card-footer { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-top:1px solid #30363d; background:#12161c; flex-wrap:wrap; gap:10px; }
+.card-footer { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-top:1px solid var(--line-soft); background:rgba(0,0,0,0.22); flex-wrap:wrap; gap:10px; }
 .card-stats { display:flex; gap:14px; flex-wrap:wrap; }
-.card-stat { font-size:11px; color:#8b949e; white-space:nowrap; }
-.card-stat strong { color:#c9d1d9; }
+.card-stat { font-size:11px; color:var(--ink-dim); white-space:nowrap; }
+.card-stat strong { color:var(--ink); font-variant-numeric:tabular-nums; }
 .test-badge { cursor:pointer; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:2px; }
-.test-badge:hover { color:#f0f6fc; }
+.test-badge:hover { color:var(--ink); }
 
 .card-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }
-.status-ok { background:#3fb950; box-shadow:0 0 6px rgba(63,185,80,0.3); }
-.status-warn { background:#d29922; box-shadow:0 0 6px rgba(210,153,34,0.3); }
-.status-err { background:#f85149; box-shadow:0 0 6px rgba(248,81,73,0.3); }
+.status-ok { background:var(--green); box-shadow:0 0 6px rgba(52,211,153,0.5); }
+.status-warn { background:var(--amber); box-shadow:0 0 6px rgba(251,191,36,0.5); }
+.status-err { background:var(--red); box-shadow:0 0 6px rgba(248,113,113,0.5); }
 
-.btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:7px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; transition:all 0.15s; }
-.btn:hover { background:#30363d; border-color:#484f58; transform:translateY(-1px); }
-.btn:active { transform:translateY(0); }
-.btn-primary { background:#238636; border-color:rgba(35,134,54,0.5); color:#fff; }
-.btn-primary:hover { background:#2ea043; border-color:#2ea043; }
-.btn-danger { border-color:rgba(248,81,73,0.4); color:#f85149; }
-.btn-danger:hover { background:#f85149; border-color:#f85149; color:#fff; }
-.btn-active { background:#1f6feb; border-color:rgba(31,111,235,0.5); color:#fff; }
+.btn { background:var(--bg3); border:1px solid var(--line); color:var(--ink); padding:8px 16px; border-radius:10px; cursor:pointer; font-size:12px; font-weight:600; font-family:var(--font-ui); transition:background 0.15s, border-color 0.15s, transform 0.15s, box-shadow 0.15s; }
+.btn:hover { background:#242e44; border-color:#35405c; transform:translateY(-1px); box-shadow:0 6px 16px rgba(0,0,0,0.35); }
+.btn:active { transform:translateY(0); box-shadow:none; }
+.btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.btn:disabled { opacity:0.55; cursor:wait; transform:none; }
+.btn-primary { background:linear-gradient(180deg,#8577f7 0%,#6f5ef2 100%); border-color:rgba(124,108,245,0.6); color:#fff; box-shadow:0 4px 14px rgba(124,108,245,0.3); }
+.btn-primary:hover { background:linear-gradient(180deg,#9486f8 0%,#7c6cf5 100%); border-color:var(--accent); box-shadow:0 6px 20px rgba(124,108,245,0.4); }
+.btn-danger { border-color:rgba(248,113,113,0.45); color:var(--red); }
+.btn-danger:hover { background:var(--red); border-color:var(--red); color:#0b0e14; }
+.btn-active { background:var(--accent-soft); border-color:rgba(124,108,245,0.55); color:var(--accent); }
 
-.form-section { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:28px; margin-bottom:24px; transition:border-color 0.2s; }
-.form-section:hover { border-color:#484f58; }
-.form-section h3 { font-size:16px; margin-bottom:20px; color:#f0f6fc; }
+.form-section { background:var(--bg2); border:1px solid var(--line-soft); border-radius:var(--r-lg); padding:28px; margin-bottom:24px; transition:border-color 0.2s, box-shadow 0.2s; }
+.form-section:hover { border-color:var(--line); box-shadow:0 12px 36px rgba(0,0,0,0.3); }
+.form-section h3 { font-size:16px; font-weight:700; letter-spacing:-0.2px; margin-bottom:6px; color:var(--ink); display:flex; align-items:center; gap:10px; }
+.form-section h3::before { content:''; display:inline-block; width:4px; height:18px; border-radius:2px; background:linear-gradient(180deg,var(--accent),var(--blue)); }
+.form-section > p { color:var(--ink-dim); }
 .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
 .form-row.full { grid-template-columns:1fr; }
-.form-group label { display:block; font-size:11px; color:#8b949e; margin-bottom:4px; font-weight:500; text-transform:uppercase; letter-spacing:0.3px; }
-.form-group input { width:100%; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:10px 12px; border-radius:6px; font-size:13px; transition:border-color 0.15s; }
-.form-group input:focus { outline:none; border-color:#1f6feb; box-shadow:0 0 0 3px rgba(31,111,235,0.15); }
+.pw-wrap { position:relative; }
+.pw-wrap input { padding-right:38px; }
+.form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
+.form-row.full { grid-template-columns:1fr; }
 .pw-wrap { position:relative; }
 .pw-wrap input { padding-right:38px; }
 .pw-toggle { position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:#8b949e; cursor:pointer; font-size:15px; padding:4px 6px; line-height:1; }
 .pw-toggle:hover { color:#f0f6fc; }
 
-.error { color:#f85149; font-size:13px; margin-bottom:10px; padding:8px 12px; background:rgba(248,81,73,0.08); border:1px solid rgba(248,81,73,0.2); border-radius:6px; }
-.success { color:#3fb950; font-size:13px; margin-bottom:10px; padding:8px 12px; background:rgba(63,185,80,0.08); border:1px solid rgba(63,185,80,0.2); border-radius:6px; }
+.error { color:var(--red); font-size:13px; margin-bottom:10px; padding:10px 14px; background:rgba(248,113,113,0.08); border:1px solid rgba(248,113,113,0.25); border-radius:var(--r-sm); }
+.success { color:var(--green); font-size:13px; margin-bottom:10px; padding:10px 14px; background:rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.25); border-radius:var(--r-sm); }
 .error:empty, .success:empty { display:none; padding:0; margin:0; border:none; }
 
-.overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:100; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+.overlay { display:none; position:fixed; inset:0; background:rgba(4,6,10,0.7); z-index:100; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
 .overlay.open { display:flex; align-items:center; justify-content:center; }
-.modal { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:24px; width:520px; max-width:92vw; max-height:90vh; overflow-y:auto; scrollbar-width:none; animation:modalIn 0.2s ease; }
+.modal { background:var(--bg2); border:1px solid var(--line); border-radius:var(--r-lg); padding:26px; width:520px; max-width:92vw; max-height:90vh; overflow-y:auto; scrollbar-width:none; animation:modalIn 0.22s cubic-bezier(0.2,0.9,0.3,1.2); box-shadow:0 24px 80px rgba(0,0,0,0.5); }
 .modal::-webkit-scrollbar { display:none; }
 @keyframes modalIn { from { opacity:0; transform:scale(0.95) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
 .modal h3 { font-size:17px; margin-bottom:20px; color:#f0f6fc; }
@@ -96,20 +140,20 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .empty-state p { font-size:15px; margin-bottom:6px; }
 .empty-state .hint { font-size:13px; }
 
-.test-pass { color:#3fb950; }
-.test-fail { color:#f85149; }
-.test-pending { color:#d29922; }
+.test-pass { color:var(--green); }
+.test-fail { color:var(--red); }
+.test-pending { color:var(--amber); }
 
-.status-label { font-size:11px; margin-left:6px; padding:2px 8px; border-radius:4px; font-weight:500; }
-.status-label.status-ok { color:#3fb950; background:rgba(63,185,80,0.1); }
-.status-label.status-err { color:#f85149; background:rgba(248,81,73,0.1); }
-.status-label.status-premium { color:#3fb950; background:rgba(63,185,80,0.1); }
-.status-label.status-preview { color:#d29922; background:rgba(210,153,34,0.1); }
-.status-label.status-muted { color:#8b949e; background:rgba(139,148,158,0.1); }
+.status-label { font-size:11px; margin-left:6px; padding:2px 8px; border-radius:20px; font-weight:600; letter-spacing:0.2px; }
+.status-label.status-ok { color:var(--green); background:rgba(52,211,153,0.12); }
+.status-label.status-err { color:var(--red); background:rgba(248,113,113,0.12); }
+.status-label.status-premium { color:var(--green); background:rgba(52,211,153,0.12); }
+.status-label.status-preview { color:var(--amber); background:rgba(251,191,36,0.12); }
+.status-label.status-muted { color:var(--ink-dim); background:rgba(163,173,191,0.12); }
 
-.test-results-section { background:#161b22; border:1px solid #30363d; border-radius:10px; margin:24px 0; overflow:hidden; transition:border-color 0.2s, box-shadow 0.2s; }
-.test-results-section:hover { border-color:#484f58; box-shadow:0 4px 24px rgba(0,0,0,0.3); }
-.test-results-section .test-results-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:#1c2128; border-bottom:1px solid #30363d; }
+.test-results-section { background:var(--bg2); border:1px solid var(--line-soft); border-radius:var(--r-md); margin:24px 0; overflow:hidden; transition:border-color 0.2s, box-shadow 0.2s; }
+.test-results-section:hover { border-color:var(--line); box-shadow:0 12px 36px rgba(0,0,0,0.3); }
+.test-results-section .test-results-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:rgba(0,0,0,0.2); border-bottom:1px solid var(--line-soft); }
 .test-results-section .test-results-header h3 { font-size:14px; color:#f0f6fc; font-weight:600; }
 .test-results-section .test-results-header .test-summary { font-size:11px; color:#8b949e; }
 .test-results-section .test-results-body { padding:4px; }
@@ -154,7 +198,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 @keyframes highlightPulse { 0%,100% { border-color:#30363d; } 50% { border-color:#58a6ff; box-shadow:0 0 20px rgba(88,166,255,0.15); } }
 .form-highlight { animation:highlightPulse 1.5s ease; }
 
-.terminal { background:#050805; border:1px solid #1d3a24; border-radius:10px; overflow:hidden; margin-bottom:24px; box-shadow:0 0 24px rgba(63,185,80,0.07); }
+.terminal { background:#060a08; border:1px solid #1e3a26; border-radius:var(--r-md); overflow:hidden; margin-bottom:24px; box-shadow:0 0 32px rgba(52,211,153,0.06); }
 .term-bar { display:flex; align-items:center; gap:10px; padding:9px 14px; background:#0b120c; border-bottom:1px solid #1d3a24; }
 .term-dots { display:flex; gap:6px; }
 .term-dots i { width:10px; height:10px; border-radius:50%; background:#2a3b2d; }
@@ -186,18 +230,34 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </style>
 </head>
 <body>
-<div class="container">
-<div class="header">
-<h1>HiFi API Admin</h1>
-<div style="display:flex;gap:8px;align-items:center">
-<button class="btn btn-primary" onclick="testAll()" id="testAllBtn">Test All</button>
-<span class="badge" id="version">v2.10</span>
-</div>
-</div>
-<div id="stats" class="stats"></div>
+<div class="shell">
+<aside class="side">
+<div class="brand"><span class="brand-mark"></span><span><span class="brand-name">HiFi Admin</span><br><span class="brand-sub" id="version">v2.10</span></span></div>
+<div class="nav-label">Monitor</div>
+<nav class="nav">
+<a href="#sec-overview">Overview</a>
+<a href="#sec-requests">Requests</a>
+<a href="#sec-accounts">Accounts</a>
+</nav>
+<div class="nav-label">Manage</div>
+<nav class="nav">
+<a href="#sec-add">Add account</a>
+<a href="#sec-import">Import / Export</a>
+<a href="#sec-settings">Settings</a>
+<a href="#sec-proxies">Proxies</a>
+<a href="#sec-alerts">Alerts</a>
+<a href="#sec-keys">API keys</a>
+<a href="#sec-backup">Backup</a>
+<a href="#sec-cache">Cache</a>
+<a href="#sec-tests">Tests</a>
+</nav>
+<div class="side-foot"><button class="btn btn-primary" onclick="testAll()" id="testAllBtn" style="width:100%">Test All</button></div>
+</aside>
+<main class="main">
 <div id="error" class="error"></div>
 <div id="success" class="success"></div>
-<div class="terminal">
+<section id="sec-overview" aria-label="Overview"><div id="stats" class="stats"></div></section>
+<section id="sec-requests" aria-label="Requests"><div class="terminal">
 <div class="term-bar"><span class="term-dots"><i></i><i></i><i></i></span><span class="term-title">hifi-api — live request log</span><span class="term-live" id="term-live">● LIVE</span></div>
 <div class="term-meta">
 <span>Total <strong id="rq-total">—</strong></span>
@@ -214,9 +274,9 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <span style="margin-left:auto"><label style="font-size:11px;color:#8b949e">filter <select id="rq-filter" onchange="loadRequestLog()" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:11px"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></label></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
-</div>
-<div id="accounts-container" class="accounts-grid"></div>
-<div class="form-section">
+</div></section>
+<section id="sec-accounts" aria-label="Accounts"><div class="sec-head"><h2>Accounts</h2></div><div id="accounts-container" class="accounts-grid"></div></section>
+<div class="form-section" id="sec-add">
 <h3>Add Account</h3>
 <div class="form-row">
 <div class="form-group"><label>Label</label><input type="text" id="new-label" placeholder="My Account"></div>
@@ -234,7 +294,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <label style="display:inline-flex;align-items:center;gap:6px;margin-left:12px;font-size:12px;color:#8b949e"><input type="checkbox" id="new-catalog" style="width:auto"> Catalog-only (metadata, never playback)</label>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-import">
 <h3>Import / Export</h3>
 <p style="font-size:12px;color:#8b949e;margin-bottom:12px">Backup or restore all Tidal credentials as JSON. Import skips duplicates by refresh_token.</p>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -245,7 +305,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div id="importResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-settings">
 <h3>Settings</h3>
 <div class="form-row">
 <div class="form-group"><label>Atmos default</label><select id="rl-atmos" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:10px 12px;border-radius:6px;font-size:13px"><option value="off">Off (FLAC first)</option><option value="prefer">Prefer (Atmos first)</option></select></div>
@@ -255,7 +315,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-proxies">
 <h3>Proxies</h3>
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Status <strong id="px-status">—</strong></span>
@@ -266,7 +326,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <p style="font-size:11px;color:#8b949e;margin-bottom:0">Optional. Set <span style="font-family:monospace">USE_PROXIES=true</span> + <span style="font-family:monospace">PROXIES_FILE</span> and restart to route Tidal traffic through rotating proxies. Without it, everything goes direct.</p>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-alerts">
 <h3>Alerts</h3>
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Discord <strong id="al-discord">—</strong></span>
@@ -277,7 +337,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <button class="btn" onclick="sendReport('accounts')" id="reportAccountsBtn" style="margin-left:8px">Send Accounts</button>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-keys">
 <h3>API Keys</h3>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">While no key exists the API stays open. Creating the first key locks all public routes behind <span style="font-family:monospace">X-API-Key</span> (or owner <span style="font-family:monospace">X-Admin-Key</span>). Quota 0 = unlimited.</p>
 <div class="form-row">
@@ -289,7 +349,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div id="keys-container" style="margin-top:12px"></div>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-backup">
 <h3>Backup / Restore</h3>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">Download a snapshot of the database (accounts, keys, settings), or restore from one. Restore reloads everything live — no restart needed.</p>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -300,7 +360,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div id="restoreResult" style="font-size:12px;margin-top:10px;color:#8b949e"></div>
 </div>
 
-<div class="form-section">
+<div class="form-section" id="sec-cache">
 <h3>Cache</h3>
 <div class="card-stats" style="margin-bottom:12px">
 <span class="card-stat">Cache hits <strong id="cc-hits">—</strong></span>
@@ -312,13 +372,16 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <button class="btn" onclick="clearCache()" id="clearCacheBtn">Clear Cache</button>
 </div>
 
-<div class="test-results-section" id="testResultsSection" style="display:none">
+<section id="sec-tests" aria-label="Tests"><div class="test-results-section" id="testResultsSection" style="display:none">
 <div class="test-results-header">
 <h3>Test Results</h3>
 <div class="test-summary" id="testSummary"></div>
 </div>
 <div class="test-results-body" id="testResultsList"></div>
 </div>
+</section>
+<footer class="footer">HiFi API admin · served locally, no external requests</footer>
+</main>
 </div>
 <div id="oauthOverlay" class="overlay" onclick="if(event.target===this)closeOAuth()">
 <div class="modal">
@@ -571,7 +634,7 @@ function showTestDetails(id) {
     if (raw) {
         var pretty = renderResponsePreview(raw);
         html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363d"><span class="cred-key" style="display:block;margin-bottom:8px">Full JSON Response</span>';
-        html += '<pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;color:#c9d1d9;font-size:11px">' + pretty + '</pre></div>';
+        html += '<pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;color:#c9d1d9;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">' + pretty + '</pre></div>';
     }
     document.getElementById('testDetailsContent').innerHTML = html;
     document.getElementById('testOverlay').classList.add('open');
@@ -1283,4 +1346,4 @@ async function saveSettings() {
 }
 </script>
 </body>
-</html>"#;
+</html>"##;
