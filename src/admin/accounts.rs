@@ -54,6 +54,8 @@ pub async fn list_accounts(
             "is_catalog": a.is_catalog.load(std::sync::atomic::Ordering::Relaxed),
             "token_expires_at": a.token_expires_at.load(std::sync::atomic::Ordering::Relaxed),
             "last_used": a.last_used.load(std::sync::atomic::Ordering::Relaxed),
+            "premium_status": a.premium_status.read().await.clone(),
+            "premium_checked_at": a.premium_checked_at.load(std::sync::atomic::Ordering::Relaxed),
             "notes": a.notes.read().await.clone(),
         }));
     }
@@ -161,8 +163,7 @@ pub async fn toggle_account(
 pub async fn refresh_account_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    let account = state
+) -> Result<Json<Value>, AppError> {    let account = state
         .account_manager
         .get_account_by_id(&id)
         .await
@@ -190,6 +191,29 @@ pub async fn refresh_account_token(
             ))
         }
     }
+}
+
+/// Manual premium probe for one account: FULL on any fixture track means
+/// the subscription serves full quality, all-PREVIEW means snippet-only.
+/// Display only — records the verdict, never touches flags or counters.
+pub async fn check_account_premium(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let account = state
+        .account_manager
+        .get_account_by_id(&id)
+        .await
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", id)))?;
+
+    let (status, reason) = state.tidal_client.probe_account_premium(&account).await;
+    state.account_manager.set_premium(&id, &status).await;
+    Ok(Json(json!({
+        "account_id": id,
+        "premium": status,
+        "reason": reason,
+        "checked_at": chrono::Utc::now().timestamp(),
+    })))
 }
 
 pub async fn test_all_accounts(

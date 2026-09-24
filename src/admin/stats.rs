@@ -31,6 +31,13 @@ pub async fn get_stats(
         .iter()
         .filter(|a| a.is_active.load(std::sync::atomic::Ordering::Relaxed))
         .count();
+    let premium_count = accounts
+        .iter()
+        .filter(|a| {
+            a.is_active.load(std::sync::atomic::Ordering::Relaxed)
+                && a.premium_status.try_read().map(|s| s.as_str() == "premium").unwrap_or(false)
+        })
+        .count();
     let playback_count = state.account_manager.playback_count().await;
     let pool = state.account_manager.playback_slots().await;
     // No queue exists: every playback request runs directly. Same card
@@ -74,6 +81,7 @@ pub async fn get_stats(
         "total_accounts": accounts.len(),
         "active_accounts": active_count,
         "healthy_accounts": active_count,
+        "premium_accounts": premium_count,
         "playback_accounts": playback_count,
         "playback": playback,
         "catalog": catalog,

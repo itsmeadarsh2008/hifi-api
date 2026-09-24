@@ -515,3 +515,139 @@ impl TidalClient {
         Err(AppError::Unauthorized("Catalog account unauthorized".into()))
     }
 }
+
+/// Probe fixtures shared with pool-contributor's premium check: mainstream
+/// tracks expected FULL on any premium subscription.
+const PROBE_TRACK_IDS: &[i64] = &[427520487, 39249713, 58990511, 144371283];
+/// Per-request ceiling so one stuck probe can't hang the admin call.
+const PROBE_REQ_SECS: u64 = 20;
+
+impl TidalClient {
+    /// Read the presentation out of a playbackinfo payload. Pure function —
+    /// unit tested.
+    pub(crate) fn presentation_of(body: &Value) -> Option<String> {
+        body.get("assetPresentation")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// Manual premium probe for one account: FULL anywhere → premium, all
+    /// PREVIEW → preview-only, anything inconclusive → unknown/error.
+    /// Read-only by design: records no errors, touches no flags — real
+    /// traffic already handles sidelining on its own.
+    pub async fn probe_account_premium(
+        &self,
+        account: &std::sync::Arc<AccountState>,
+    ) -> (String, String) {
+        let http = match self.working_client().await {
+            Ok(h) => h,
+            Err(e) => return ("unknown".into(), format!("no egress: {:?}", e)),
+        };
+        let mut token = match self.token_manager.get_token(account, &http).await {
+            Ok(t) => t,
+            Err(e) => return ("error".into(), format!("token failed: {:?}", e)),
+        };
+        let mut preview_reason = String::new();
+        for track_id in PROBE_TRACK_IDS {
+            let url = format!("https://api.tidal.com/v1/tracks/{}/playbackinfo", track_id);
+            let mut tried_refresh = false;
+            let presentation = loop {
+                let send = http
+                    .get(&url)
+                    .query(&[
+                        ("audioquality", "HI_RES_LOSSLESS"),
+                        ("playbackmode", "STREAM"),
+                        ("assetpresentation", "FULL"),
+                    ])
+                    .header("authorization", format!("Bearer {}", token))
+                    .header("User-Agent", self.config.user_agent.as_str())
+                    .send();
+                let resp = match tokio::time::timeout(
+                    std::time::Duration::from_secs(PROBE_REQ_SECS),
+                    send,
+                )
+                .await
+                {
+                    Ok(Ok(r)) => r,
+                    _ => {
+                        return (
+                            "unknown".into(),
+                            "network error reaching Tidal".into(),
+                        )
+                    }
+                };
+                match resp.status().as_u16() {
+                    // Stale token: refresh once per probe, retry same track.
+                    401 if !tried_refresh => {
+                        tried_refresh = true;
+                        match self.token_manager.refresh_token(account, &http).await {
+                            Ok(t) => {
+                                token = t;
+                                continue;
+                            }
+                            Err(e) => {
+                                return (
+                                    "error".into(),
+                                    format!("token refresh failed: {:?}", e),
+                                )
+                            }
+                        }
+                    }
+                    // Throttled / server-side / restricted: inconclusive,
+                    // don't burn the remaining fixtures.
+                    s if s == 429 || s >= 500 => {
+                        return (
+                            "unknown".into(),
+                            format!("Tidal HTTP {} — try again later", s),
+                        )
+                    }
+                    403 => {
+                        return (
+                            "unknown".into(),
+                            "Tidal 403 — account may be restricted".into(),
+                        )
+                    }
+                    _ => {
+                        let body = resp.text().await.unwrap_or_default();
+                        let data: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        break Self::presentation_of(&data);
+                    }
+                }
+            };
+            match presentation.as_deref() {
+                Some("FULL") => return ("premium".into(), String::new()),
+                Some("PREVIEW") => {
+                    if preview_reason.is_empty() {
+                        preview_reason = "every probed track returned PREVIEW".to_string();
+                    }
+                }
+                // Unparseable track: inconclusive, try the next fixture.
+                _ => continue,
+            }
+        }
+        if preview_reason.is_empty() {
+            preview_reason = "no fixture gave a conclusive answer".to_string();
+        }
+        ("preview-only".into(), preview_reason)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TidalClient;
+    use serde_json::json;
+
+    #[test]
+    fn presentation_shapes() {
+        assert_eq!(
+            TidalClient::presentation_of(&json!({"assetPresentation": "FULL"})),
+            Some("FULL".to_string())
+        );
+        assert_eq!(
+            TidalClient::presentation_of(&json!({"assetPresentation": "PREVIEW"})),
+            Some("PREVIEW".to_string())
+        );
+        assert_eq!(TidalClient::presentation_of(&json!({})), None);
+        assert_eq!(TidalClient::presentation_of(&json!({"assetPresentation": 7})), None);
+    }
+}

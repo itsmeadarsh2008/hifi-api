@@ -50,6 +50,11 @@ pub struct AccountState {
     pub last_used: AtomicI64,
     pub request_count: AtomicU64,
     pub error_count: AtomicU64,
+    /// Premium verdict from the last manual probe ("unknown" until checked).
+    /// In-memory only and never acted on automatically — real traffic
+    /// independently fails over on PREVIEW. Reset on restart.
+    pub premium_status: RwLock<String>,
+    pub premium_checked_at: AtomicI64,
     /// Last mutation unix timestamp (local admin ops AND Redis merges).
     /// Drives newest-wins convergence across instances.
     pub updated_at: AtomicI64,
@@ -85,6 +90,8 @@ impl AccountState {
             last_used: AtomicI64::new(0),
             request_count: AtomicU64::new(0),
             error_count: AtomicU64::new(0),
+            premium_status: RwLock::new("unknown".to_string()),
+            premium_checked_at: AtomicI64::new(0),
             updated_at: AtomicI64::new(0),
         }
     }
@@ -100,6 +107,17 @@ impl AccountState {
         new.auto_disabled.store(old.auto_disabled.load(Ordering::Relaxed), Ordering::Relaxed);
         new.heal_failures.store(old.heal_failures.load(Ordering::Relaxed), Ordering::Relaxed);
         new.heal_next_retry.store(old.heal_next_retry.load(Ordering::Relaxed), Ordering::Relaxed);
+        // Best-effort preserve (lock-free try pair; contention just keeps default).
+        if let (Ok(src), Ok(mut dst)) = (
+            old.premium_status.try_read(),
+            new.premium_status.try_write(),
+        ) {
+            *dst = src.clone();
+        }
+        new.premium_checked_at.store(
+            old.premium_checked_at.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -565,6 +583,17 @@ impl AccountManager {
                 .execute(db)
                 .await;
             }
+        }
+    }
+
+    /// Record a manual premium-probe verdict. Display only — never touches
+    /// activity flags, counters, or heal state.
+    pub async fn set_premium(&self, id: &str, status: &str) {
+        if let Some(account) = self.get_account_by_id(id).await {
+            *account.premium_status.write().await = status.to_string();
+            account
+                .premium_checked_at
+                .store(Utc::now().timestamp(), Ordering::Relaxed);
         }
     }
 
@@ -1041,6 +1070,23 @@ mod tests {
         assert!(am.find_catalog_account().await.is_none());
         let picked = am.select_catalog_account().await.unwrap();
         assert_eq!(picked.id, playback.id);
+    }
+
+    #[tokio::test]
+    async fn premium_verdict_roundtrip() {
+        use super::{AccountManager, SwitchingWeights};
+        use std::sync::Arc;
+        let am = Arc::new(AccountManager::new(None, SwitchingWeights::default()));
+        let acc = am
+            .add_account("p".into(), "c".into(), "s".into(), "rt-p".into(), None)
+            .await
+            .unwrap();
+        // Unknown until probed.
+        assert_eq!(*acc.premium_status.read().await, "unknown");
+        am.set_premium(&acc.id, "premium").await;
+        let got = am.get_account_by_id(&acc.id).await.unwrap();
+        assert_eq!(*got.premium_status.read().await, "premium");
+        assert!(got.premium_checked_at.load(Ordering::Relaxed) > 0);
     }
 
     #[test]

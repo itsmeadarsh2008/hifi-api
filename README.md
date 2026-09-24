@@ -137,7 +137,7 @@ Access at `/admin`. If `ADMIN_KEY` is set, include the header `X-Admin-Key: <you
 | Section | What it does |
 |---|---|
 | Live request log | Terminal-style tail of recent requests (method, path, song ID, status, latency, client IP) with totals, error count, p50/p95, per-endpoint hits and top tracks |
-| Accounts | Numbered cards with credentials, user ID, stats, `CATALOG` badge for metadata-only accounts, Test/Refresh/Edit/Duplicate/Catalog/ON-OFF/Delete; **Add via OAuth** asks for an optional label in the modal |
+| Accounts | Numbered cards with credentials, user ID, stats, `CATALOG` badge for metadata-only accounts, premium badge (`PREMIUM`/`PREVIEW-ONLY`/`UNCHECKED`) with per-account probe, Test/Refresh/Check-premium/Edit/Duplicate/Catalog/ON-OFF/Delete; **Add via OAuth** asks for an optional label in the modal |
 | Import / Export | Download all credentials as `credentials.json` (catalog accounts carry `role: "catalog"`), or restore from one (duplicates skipped by refresh token; upstream `token.json` shape accepted) |
 | API Keys | Per-client keys (`X-API-Key`) with quotas. While none exists the API stays open; creating the first key locks public routes behind a key (owner `X-Admin-Key` bypasses) |
 | Settings | Atmos default + auto-heal toggle — applied live, persisted to DB |

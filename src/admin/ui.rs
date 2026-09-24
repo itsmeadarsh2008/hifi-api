@@ -651,6 +651,7 @@ async function fetchData() {
             '<div class="stat-card"><div class="label">Total Requests</div><div class="value">' + (stats.total_requests || 0) + '</div></div>' +
             '<div class="stat-card"><div class="label">Error Rate <span style="opacity:.55;font-size:11px">last 5k</span></div><div class="value">' + (stats.error_rate || '0.00%') + '</div></div>' +
             '<div class="stat-card"><div class="label">Active</div><div class="value">' + (stats.healthy_accounts || 0) + '/' + (stats.total_accounts || 0) + '</div></div>' +
+            '<div class="stat-card"><div class="label">Premium</div><div class="value">' + (stats.premium_accounts != null ? stats.premium_accounts : '—') + '</div></div>' +
             playbackCard(stats.playback) +
             catalogCard(stats.catalog) +
             redisCard(stats.redis);
@@ -669,14 +670,21 @@ async function fetchData() {
                 var tokenStr = timeStr(a.token_expires_at);
                 var uid = a.user_id || '-';
                 var catalogBadge = a.is_catalog ? '<span class="status-label" style="color:#d2a8ff;background:rgba(210,168,255,0.1)">CATALOG</span>' : '';
+                var premiumBadge = (function(p) {
+                    if (p === 'premium') return '<span class="status-label status-ok">PREMIUM</span>';
+                    if (p === 'preview-only') return '<span class="status-label" style="color:#d29922;background:rgba(210,153,34,0.1)">PREVIEW-ONLY</span>';
+                    if (p === 'error') return '<span class="status-label status-err">CHECK FAILED</span>';
+                    return '<span class="status-label" style="color:#8b949e;background:rgba(139,148,158,0.1)">UNCHECKED</span>';
+                })(a.premium_status);
                 var catalogBtn = a.is_catalog
                     ? '<button class="btn" onclick="setCatalog(\'' + a.id + '\',false)" title="Return to playback pool">Uncatalog</button>'
                     : '<button class="btn" onclick="setCatalog(\'' + a.id + '\',true)" title="Metadata only, never playback">Catalog</button>';
                 html += '<div class="account-card">' +
                     '<div class="card-header">' +
-                        '<div class="left"><span class="acc-num">' + (i + 1) + '</span><span class="' + statusClass + '"></span><span class="label">' + esc(label) + '</span><span class="status-label ' + (a.is_active ? 'status-ok' : 'status-err') + '">' + statusText + '</span>' + catalogBadge + '</div>' +
+                        '<div class="left"><span class="acc-num">' + (i + 1) + '</span><span class="' + statusClass + '"></span><span class="label">' + esc(label) + '</span><span class="status-label ' + (a.is_active ? 'status-ok' : 'status-err') + '">' + statusText + '</span>' + catalogBadge + premiumBadge + '</div>' +
                         '<div class="card-actions">' +
                             '<button class="btn" onclick="refreshAccount(\'' + a.id + '\')">Refresh Token</button>' +
+                            '<button class="btn" onclick="checkPremium(\'' + a.id + '\')" title="Probe whether this account serves full quality">Check premium</button>' +
                             '<button class="btn" onclick="openEdit(\'' + a.id + '\')">Edit</button>' +
                             '<button class="btn" onclick="duplicateAccount(\'' + a.id + '\')">Duplicate</button>' +
                             catalogBtn +
@@ -695,6 +703,7 @@ async function fetchData() {
                             '<span class="card-stat">Requests <strong>' + a.request_count + '</strong></span>' +
                             '<span class="card-stat">Errors <strong>' + a.error_count + '</strong>' + (a.request_count > 0 ? ' (' + (100 * a.error_count / a.request_count).toFixed(1) + '%)' : '') + '</span>' +
                             '<span class="card-stat">Used <strong>' + relAgo(a.last_used) + '</strong></span>' +
+                            '<span class="card-stat">Premium <strong>' + esc(a.premium_status || 'unknown') + '</strong>' + (a.premium_checked_at > 0 ? ' (' + relAgo(a.premium_checked_at) + ')' : '') + '</span>' +
                             (a.auto_disabled ? '<span class="card-stat">Auto-heal <strong>retrying</strong></span>' : '') +
                             '<span class="card-stat">Token <strong>' + tokenStr + '</strong></span>' +
                             '<span class="card-stat test-badge" id="test-' + a.id + '" onclick="showTestDetails(\'' + a.id + '\')">Test <strong>-</strong></span>' +
@@ -721,7 +730,6 @@ function togglePw(id, btn) {
     input.type = show ? 'text' : 'password';
     if (btn) btn.innerHTML = show ? '&#128064;' : '&#128065;';
 }
-
 async function refreshAccount(id) {
     try {
         var res = await fetch('/admin/accounts/' + id + '/refresh', {
@@ -733,6 +741,26 @@ async function refreshAccount(id) {
             fetchData();
         } else {
             document.getElementById('error').textContent = 'Refresh failed: ' + (data.message || data.detail || res.status);
+        }
+    } catch(e) {
+        document.getElementById('error').textContent = e.message;
+    }
+}
+
+async function checkPremium(id) {
+    try {
+        document.getElementById('success').textContent = 'Probing account…';
+        var res = await fetch('/admin/accounts/' + id + '/check-premium', {
+            method: 'POST', headers: headers()
+        });
+        var data = await res.json();
+        if (res.ok) {
+            var msg = 'Premium check: ' + data.premium;
+            if (data.reason) msg += ' (' + data.reason + ')';
+            document.getElementById('success').textContent = msg;
+            fetchData();
+        } else {
+            document.getElementById('error').textContent = 'Check failed: ' + (data.detail || res.status);
         }
     } catch(e) {
         document.getElementById('error').textContent = e.message;
