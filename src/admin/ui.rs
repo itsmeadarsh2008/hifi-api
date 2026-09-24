@@ -35,7 +35,7 @@ const ADMIN_HTML: &str = r#"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HiFi API Admin</title>
-<link rel="stylesheet" href="assets/xterm.css">
+<link rel="stylesheet" href="/admin/assets/xterm.css">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,Monaco,Consolas,monospace; background:#0d1117; color:#c9d1d9; padding:20px; }
@@ -376,8 +376,8 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 </div>
 </div>
 
-<script src="assets/xterm.js"></script>
-<script src="assets/addon-fit.js"></script>
+<script src="/admin/assets/xterm.js"></script>
+<script src="/admin/assets/addon-fit.js"></script>
 <script>
 /* Live log terminal (xterm.js, vendored). Rows render as ANSI text;
    filters/search apply to the fetched window before writing. */
