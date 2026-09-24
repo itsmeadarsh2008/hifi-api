@@ -198,12 +198,16 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <div class="term-meta">
 <span>Total <strong id="rq-total">—</strong></span>
 <span>Errors <strong id="rq-errors">—</strong></span>
+<span title="4xx except 429: bad input, auth">Client <strong id="rq-user-errors">—</strong></span>
+<span title="429/5xx: throttled or Tidal failing">Upstream <strong id="rq-upstream-errors">—</strong></span>
 <span>p50 <strong id="rq-p50">—</strong></span>
 <span>p95 <strong id="rq-p95">—</strong></span>
 <span id="rq-endpoints"></span>
 <span id="rq-statuses" style="color:#f0883e"></span>
 <span id="rq-err-endpoints" style="color:#f85149"></span>
+<span id="rq-slowest" style="color:#d29922"></span>
 <span id="rq-tracks" style="color:#d2a8ff"></span>
+<span style="margin-left:auto"><label style="font-size:11px;color:#8b949e">filter <select id="rq-filter" onchange="loadRequestLog()" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:11px"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></label></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
 </div>
@@ -1097,6 +1101,8 @@ async function loadRequestLog() {
         var r = (await res.json()).requests || {};
         document.getElementById('rq-total').textContent = r.total != null ? r.total : '—';
         document.getElementById('rq-errors').textContent = r.errors != null ? r.errors : '—';
+        document.getElementById('rq-user-errors').textContent = r.user_errors != null ? r.user_errors : '—';
+        document.getElementById('rq-upstream-errors').textContent = r.upstream_errors != null ? r.upstream_errors : '—';
         document.getElementById('rq-p50').textContent = r.p50_ms != null ? r.p50_ms + 'ms' : '—';
         document.getElementById('rq-p95').textContent = r.p95_ms != null ? r.p95_ms + 'ms' : '—';
         var ep = '';
@@ -1120,8 +1126,17 @@ async function loadRequestLog() {
             tt += '<span>#' + esc(t.id) + ' <strong>×' + t.hits + '</strong></span>';
         }
         document.getElementById('rq-tracks').innerHTML = tt ? '<span style="color:#5f6f60">top:</span> ' + tt : '';
+        var sw = '';
+        for (var s of (r.slowest || []).slice(0, 3)) {
+            sw += '<span>' + esc(s.endpoint) + (s.detail ? ' #' + esc(s.detail) : '') + ' <strong>' + s.latency_ms + 'ms</strong></span>';
+        }
+        document.getElementById('rq-slowest').innerHTML = sw ? '<span style="color:#5f6f60">slowest:</span> ' + sw : '';
         var rows = '';
+        var filter = 'all';
+        try { filter = document.getElementById('rq-filter').value || 'all'; } catch(e) {}
         for (var q of (r.recent || [])) {
+            if (filter === 'errors' && !(q.status >= 400)) continue;
+            if (filter === 'slow' && !q.slow && !(q.latency_ms >= 3000)) continue;
             var cls = q.status >= 500 ? 'test-fail' : (q.status >= 400 ? 'test-pending' : 'test-pass');
             var t = '';
             if (q.ts) {
@@ -1133,7 +1148,8 @@ async function loadRequestLog() {
                 '<span class="term-path">' + esc(q.path) + '</span>' +
                 (q.detail ? ' <span class="term-id">#' + esc(q.detail) + '</span>' : '') + ' ' +
                 '<span class="' + cls + '">' + q.status + '</span> ' +
-                '<span class="term-dim">' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
+                (q.cache ? '<span class="term-cache">[' + esc(q.cache) + ']</span> ' : '') +
+                '<span class="term-dim"' + (q.slow ? ' style="color:#d29922"' : '') + '>' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
         }
         var box = document.getElementById('rq-recent');
         if (rows) {

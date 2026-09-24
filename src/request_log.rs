@@ -13,6 +13,11 @@ use std::net::{IpAddr, SocketAddr};
 use crate::AppState;
 
 const MAX_ENTRIES: usize = 5000;
+/// Panel "slow" line: responses slower than this stand out in the log.
+pub const SLOW_MS: u64 = 3000;
+/// Server-side alarm: responses slower than this log a warning (Render
+/// logs) — stuck upstream calls, not just slow ones.
+const STUCK_MS: u64 = 10_000;
 
 #[derive(Clone)]
 pub struct LogEntry {
@@ -26,6 +31,9 @@ pub struct LogEntry {
     pub status: u16,
     pub latency_ms: u64,
     pub client_ip: String,
+    /// Cache verdict from the inner `X-Cache` response header
+    /// (HIT/STALE/NEGATIVE/MISS/SKIP). Empty when the path is uncached.
+    pub cache: String,
 }
 
 pub struct RequestLog {
@@ -66,6 +74,11 @@ impl RequestLog {
         let mut by_track: HashMap<String, usize> = HashMap::new();
         let mut latencies: Vec<u64> = Vec::with_capacity(total);
         let mut errors: u64 = 0;
+        // User errors (bad input, auth) vs upstream errors (throttled or
+        // Tidal failing): different causes, different fixes. 429 counts as
+        // upstream — it means Tidal pushed back, not a bad request.
+        let mut user_errors: u64 = 0;
+        let mut upstream_errors: u64 = 0;
         // User-facing window for the headline error rate: infra noise
         // (root, health probes, the panel's own polling) is excluded so
         // the rate reflects real API traffic, not monitor 200s.
@@ -83,6 +96,11 @@ impl RequestLog {
             if e.status >= 400 {
                 errors += 1;
                 *errors_by_endpoint.entry(e.path.clone()).or_default() += 1;
+                if e.status == 429 || e.status >= 500 {
+                    upstream_errors += 1;
+                } else {
+                    user_errors += 1;
+                }
             }
             if !is_infra_path(&e.path) {
                 window_total += 1;
@@ -109,6 +127,23 @@ impl RequestLog {
         top_tracks.sort_by(|a, b| b.1.cmp(&a.1));
         let mut top_err_endpoints: Vec<(String, usize)> = errors_by_endpoint.into_iter().collect();
         top_err_endpoints.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        // Slowest requests first: the fastest way to spot a sick upstream
+        // or a pathological track. Dedupe by endpoint+detail, keep worst.
+        let mut slowest: Vec<(String, String, u64)> = Vec::new();
+        {
+            let mut seen = std::collections::HashSet::new();
+            let mut by_lat: Vec<&LogEntry> = entries.iter().collect();
+            by_lat.sort_by(|a, b| b.latency_ms.cmp(&a.latency_ms));
+            for e in by_lat {
+                let k = format!("{}|{}", e.path, e.detail);
+                if seen.insert(k) {
+                    slowest.push((e.path.clone(), e.detail.clone(), e.latency_ms));
+                }
+                if slowest.len() >= 5 {
+                    break;
+                }
+            }
+        }
 
         let recent: Vec<Value> = entries
             .iter()
@@ -123,6 +158,8 @@ impl RequestLog {
                     "status": e.status,
                     "latency_ms": e.latency_ms,
                     "client_ip": e.client_ip,
+                    "cache": e.cache,
+                    "slow": e.latency_ms >= SLOW_MS,
                 })
             })
             .collect();
@@ -130,10 +167,18 @@ impl RequestLog {
         json!({
             "total": total,
             "errors": errors,
+            "user_errors": user_errors,
+            "upstream_errors": upstream_errors,
             "error_rate": if window_total > 0 {
                 format!("{:.2}%", (window_errors as f64 / window_total as f64) * 100.0)
             } else { "0.00%".into() },
             "window_total": window_total,
+            "slowest": slowest
+                .into_iter()
+                .map(|(endpoint, detail, latency_ms)| {
+                    json!({"endpoint": endpoint, "detail": detail, "latency_ms": latency_ms})
+                })
+                .collect::<Vec<_>>(),
             "p50_ms": pct(0.5),
             "p95_ms": pct(0.95),
             "by_endpoint": top_endpoints.into_iter().take(20).map(|(k, v)| json!({"endpoint": k, "hits": v})).collect::<Vec<_>>(),
@@ -214,6 +259,23 @@ pub async fn log_requests(
 
     let resp = next.run(req).await;
     let status = resp.status().as_u16();
+    let latency_ms = start.elapsed().as_millis() as u64;
+    let cache = resp
+        .headers()
+        .get("X-Cache")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if latency_ms >= STUCK_MS {
+        tracing::warn!(
+            "Slow response: {} {} → {} in {}ms (client {})",
+            method,
+            raw_path,
+            status,
+            latency_ms,
+            ip
+        );
+    }
 
     state.request_log.record(LogEntry {
         ts: chrono::Utc::now().timestamp(),
@@ -221,8 +283,9 @@ pub async fn log_requests(
         path,
         detail,
         status,
-        latency_ms: start.elapsed().as_millis() as u64,
+        latency_ms,
         client_ip: ip.to_string(),
+        cache,
     });
 
     resp
@@ -259,14 +322,19 @@ mod tests {
     use super::{is_infra_path, LogEntry, RequestLog};
 
     fn entry(path: &str, status: u16) -> LogEntry {
+        entry_full(path, status, 5, "")
+    }
+
+    fn entry_full(path: &str, status: u16, latency_ms: u64, cache: &str) -> LogEntry {
         LogEntry {
             ts: 1_700_000_000,
             method: "GET".into(),
             path: path.into(),
             detail: String::new(),
             status,
-            latency_ms: 5,
+            latency_ms,
             client_ip: "127.0.0.1".into(),
+            cache: cache.into(),
         }
     }
 
@@ -314,5 +382,29 @@ mod tests {
         let s = log.summary(0);
         assert_eq!(s["error_rate"], "0.00%");
         assert_eq!(s["window_total"], 0);
+    }
+
+    #[test]
+    fn error_split_and_slowest() {
+        let log = RequestLog::new();
+        log.record(entry_full("/track/", 200, 50, "HIT"));
+        log.record(entry_full("/track/", 400, 60, ""));
+        log.record(entry_full("/info/", 429, 9000, ""));
+        log.record(entry_full("/album/", 503, 12000, ""));
+        let s = log.summary(10);
+        // 400 is a client error; 429/5xx are upstream.
+        assert_eq!(s["user_errors"], 1);
+        assert_eq!(s["upstream_errors"], 2);
+        assert_eq!(s["errors"], 3);
+        // Slowest first, with cache labels preserved on recent rows.
+        let slowest = s["slowest"].as_array().unwrap();
+        assert_eq!(slowest[0]["endpoint"], "/album/");
+        assert_eq!(slowest[0]["latency_ms"], 12000);
+        let recent = s["recent"].as_array().unwrap();
+        let hit = recent.iter().find(|r| r["latency_ms"] == 50).unwrap();
+        assert_eq!(hit["cache"], "HIT");
+        assert_eq!(hit["slow"], false);
+        let slow = recent.iter().find(|r| r["latency_ms"] == 12000).unwrap();
+        assert_eq!(slow["slow"], true);
     }
 }
