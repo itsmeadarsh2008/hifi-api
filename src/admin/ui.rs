@@ -25,6 +25,7 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0e14">
 <title>HiFi API Admin</title>
 <link rel="stylesheet" href="assets/bulma.min.css">
 <style>
@@ -46,8 +47,11 @@ body { font-family:var(--font-ui); background:radial-gradient(1200px 600px at 80
 .side { position:sticky; top:0; height:100vh; overflow-y:auto; background:rgba(14,19,28,.7); backdrop-filter:blur(10px); border-right:1px solid var(--line-soft); padding:26px 18px; display:flex; flex-direction:column; gap:6px; }
 .brand { display:flex; align-items:center; gap:11px; padding:2px 8px 18px; }
 .brand-mark { width:30px; height:30px; border-radius:9px; background:conic-gradient(from 210deg,var(--accent),var(--blue),var(--green),var(--accent)); box-shadow:0 0 18px rgba(124,108,245,.45); flex-shrink:0; }
-.brand-name { font-weight:700; font-size:15px; letter-spacing:-0.2px; }
-.brand-sub { font-size:10.5px; color:var(--ink-faint); letter-spacing:0.4px; }
+.brand-name { font-weight:700; font-size:15px; letter-spacing:-0.2px; margin:0; display:block; }
+.brand-sub { font-size:10.5px; color:var(--ink-faint); letter-spacing:0.4px; display:block; margin-top:1px; }
+/* Skip link + screen-reader-only text. */
+.skip-link { position:absolute; left:-9999px; top:0; z-index:200; background:var(--accent); color:#fff; padding:8px 16px; border-radius:0 0 8px 0; font-size:13px; }
+.skip-link:focus { left:0; }
 .side .menu { font-size:13px; }
 .side .menu-label { font-size:10px; letter-spacing:1.1px; }
 .side .menu-list a { border-radius:var(--r-sm); border:1px solid transparent; }
@@ -60,11 +64,19 @@ section[id] { scroll-margin-top:18px; }
 @media (max-width:900px) {
   .shell { grid-template-columns:1fr; }
   .side { position:static; height:auto; border-right:none; border-bottom:1px solid var(--line-soft); padding:16px; }
-  .side .nav { display:flex; overflow-x:auto; gap:2px; padding-bottom:4px; }
-  .side .nav a { white-space:nowrap; }
-  .nav-label, .side-foot, .brand-sub { display:none; }
-  .main { padding:18px 14px; }
+  .side .menu-list { display:flex; overflow-x:auto; gap:2px; padding-bottom:4px; }
+  .side .menu-list li { flex-shrink:0; }
+  .side .menu-list a { white-space:nowrap; }
+  .nav-label, .side-foot, .brand-sub, .side .menu-label { display:none; }
+  .main { padding:18px 14px; padding-left:max(14px, env(safe-area-inset-left)); padding-right:max(14px, env(safe-area-inset-right)); }
 }
+/* Motion safety: kill loops/transitions for reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation:none !important; transition:none !important; }
+}
+/* Touch + notch ergonomics. */
+button, a, select, input, .test-result-row, .test-badge { touch-action:manipulation; }
+body { -webkit-tap-highlight-color:rgba(124,108,245,.25); padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right); }
 .footer { text-align:center; color:#5f6f60; font-size:11px; padding:24px 0 12px; }
 
 .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:24px; }
@@ -98,8 +110,9 @@ section[id] { scroll-margin-top:18px; }
 .card-stats { display:flex; gap:14px; flex-wrap:wrap; }
 .card-stat { font-size:11px; color:var(--ink-dim); white-space:nowrap; }
 .card-stat strong { color:var(--ink); font-variant-numeric:tabular-nums; }
-.test-badge { cursor:pointer; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:2px; }
+.test-badge { cursor:pointer; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:2px; background:none; border:none; font:inherit; color:inherit; padding:0; }
 .test-badge:hover { color:var(--ink); }
+.test-badge:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
 .card-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }
@@ -165,7 +178,9 @@ section[id] { scroll-margin-top:18px; }
 .test-results-section .test-results-header h3 { font-size:14px; color:#f0f6fc; font-weight:600; }
 .test-results-section .test-results-header .test-summary { font-size:11px; color:#8b949e; }
 .test-results-section .test-results-body { padding:4px; }
-.test-result-row { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid #21262d; cursor:pointer; transition:background 0.12s; font-size:12px; }
+.test-result-row { display:flex; align-items:center; gap:10px; padding:10px 16px; border:none; border-bottom:1px solid #21262d; background:none; color:inherit; font:inherit; text-align:left; width:100%; cursor:pointer; transition:background 0.12s; font-size:12px; }
+.test-result-row:hover { background:#1c2128; }
+.test-result-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .test-result-row:hover { background:#1c2128; }
 .test-result-row:last-child { border-bottom:none; }
 .test-result-row .result-label { flex:1; color:#c9d1d9; font-weight:500; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -238,9 +253,10 @@ section[id] { scroll-margin-top:18px; }
 </style>
 </head>
 <body>
+<a href="#sec-overview" class="skip-link">Skip to content</a>
 <div class="shell">
 <aside class="side">
-<div class="brand"><span class="brand-mark"></span><span><span class="brand-name">HiFi Admin</span><br><span class="brand-sub" id="version">v2.10</span></span></div>
+<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span><h1 class="brand-name">HiFi Admin</h1><span class="brand-sub" id="version">v2.10</span></span></div>
 <nav class="menu" aria-label="Admin sections">
 <p class="menu-label">Monitor</p>
 <ul class="menu-list">
@@ -264,11 +280,11 @@ section[id] { scroll-margin-top:18px; }
 <div class="side-foot"><button class="button is-primary is-fullwidth" onclick="testAll()" id="testAllBtn">Test All</button></div>
 </aside>
 <main class="main">
-<div id="error" class="error"></div>
-<div id="success" class="success"></div>
+<div id="error" class="error" role="alert" aria-live="polite"></div>
+<div id="success" class="success" aria-live="polite"></div>
 <section id="sec-overview" aria-label="Overview"><div id="stats" class="stats"></div></section>
 <section id="sec-requests" aria-label="Requests"><div class="terminal">
-<div class="term-bar"><span class="term-dots"><i></i><i></i><i></i></span><span class="term-title">hifi-api — live request log</span><span class="term-live" id="term-live">● LIVE</span></div>
+<div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="term-title">hifi-api — live request log</span><span class="term-live" id="term-live">● LIVE</span></div>
 <div class="term-meta">
 <span>Total <strong id="rq-total">—</strong></span>
 <span>Errors <strong id="rq-errors">—</strong></span>
@@ -281,7 +297,7 @@ section[id] { scroll-margin-top:18px; }
 <span id="rq-err-endpoints" style="color:#f85149"></span>
 <span id="rq-slowest" style="color:#d29922"></span>
 <span id="rq-tracks" style="color:#d2a8ff"></span>
-<span style="margin-left:auto" class="select is-small" title="filter"><select id="rq-filter" onchange="loadRequestLog()"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></span>
+<span style="margin-left:auto" class="select is-small" title="filter"><select id="rq-filter" onchange="syncLogFilter(this)"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
 </div></section>
@@ -289,15 +305,15 @@ section[id] { scroll-margin-top:18px; }
 <div class="form-section" id="sec-add">
 <h3>Add Account</h3>
 <div class="form-row">
-<div class="form-group"><label class="label">Label</label><input class="input" type="text" id="new-label" placeholder="My Account"></div>
-<div class="form-group"><label class="label">User ID (optional)</label><input class="input" type="text" id="new-user-id" placeholder="208921067"></div>
+<div class="form-group"><label class="label">Label</label><input class="input" type="text" name="label" autocomplete="off" spellcheck="false" id="new-label" onkeydown="if(event.key==='Enter'){addAccount()}" placeholder="My Account…"></div>
+<div class="form-group"><label class="label">User ID (optional)</label><input class="input" type="text" name="user-id" autocomplete="off" spellcheck="false" id="new-user-id" onkeydown="if(event.key==='Enter'){addAccount()}" placeholder="208921067…"></div>
 </div>
 <div class="form-row full">
-<div class="form-group"><label class="label">Client ID</label><input class="input" type="text" id="new-client-id" placeholder="client_id"></div>
+<div class="form-group"><label class="label">Client ID</label><input class="input" type="text" name="client-id" autocomplete="off" spellcheck="false" id="new-client-id" onkeydown="if(event.key==='Enter'){addAccount()}" placeholder="client_id…"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label class="label">Client Secret</label><div class="pw-wrap"><input class="input" type="password" id="new-client-secret" placeholder="client_secret"><button type="button" class="pw-toggle" onclick="togglePw('new-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
-<div class="form-group"><label class="label">Refresh Token</label><div class="pw-wrap"><input class="input" type="password" id="new-refresh-token" placeholder="refresh_token"><button type="button" class="pw-toggle" onclick="togglePw('new-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Client Secret</label><div class="pw-wrap"><input class="input" type="password" name="client-secret" autocomplete="new-password" spellcheck="false" id="new-client-secret" onkeydown="if(event.key==='Enter'){addAccount()}" placeholder="client_secret…"><button type="button" class="pw-toggle" onclick="togglePw('new-client-secret', this)" title="Show/hide" aria-label="Show or hide client secret">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Refresh Token</label><div class="pw-wrap"><input class="input" type="password" name="refresh-token" autocomplete="off" spellcheck="false" id="new-refresh-token" onkeydown="if(event.key==='Enter'){addAccount()}" placeholder="refresh_token…"><button type="button" class="pw-toggle" onclick="togglePw('new-refresh-token', this)" title="Show/hide" aria-label="Show or hide refresh token">&#128065;</button></div></div>
 </div>
 <button class="button is-primary" onclick="addAccount()">Add Account</button>
 <button class="button" onclick="startOAuth()" id="oauthBtn" style="margin-left:8px">Add via OAuth</button>
@@ -351,8 +367,8 @@ section[id] { scroll-margin-top:18px; }
 <h3>API Keys</h3>
 <p style="font-size:11px;color:#8b949e;margin-bottom:12px">While no key exists the API stays open. Creating the first key locks all public routes behind <span style="font-family:monospace">X-API-Key</span> (or owner <span style="font-family:monospace">X-Admin-Key</span>). Quota 0 = unlimited.</p>
 <div class="form-row">
-<div class="form-group"><label class="label">Label</label><input class="input" type="text" id="new-key-label" placeholder="My app"></div>
-<div class="form-group"><label class="label">Quota (requests, 0 = unlimited)</label><input class="input" type="number" id="new-key-quota" min="0" placeholder="0"></div>
+<div class="form-group"><label class="label">Label</label><input class="input" type="text" name="key-label" autocomplete="off" spellcheck="false" id="new-key-label" onkeydown="if(event.key==='Enter'){addApiKey()}" placeholder="My app…"></div>
+<div class="form-group"><label class="label">Quota (requests, 0 = unlimited)</label><input class="input" type="number" name="key-quota" autocomplete="off" id="new-key-quota" onkeydown="if(event.key==='Enter'){addApiKey()}" min="0" placeholder="0…"></div>
 </div>
 <button class="button is-primary" onclick="addApiKey()">Create Key</button>
 <div id="keyResult" style="font-size:12px;margin-top:10px;color:#3fb950;word-break:break-all"></div>
@@ -400,7 +416,7 @@ section[id] { scroll-margin-top:18px; }
 <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:16px;word-break:break-all;font-size:13px;font-family:monospace;color:#58a6ff;margin-bottom:16px" id="oauthUrl">—</div>
 <button class="button" onclick="copyOAuthUrl()" id="copyOAuthBtn" style="margin-right:8px">Copy URL</button>
 <button class="button" onclick="openOAuthUrl()" id="openOAuthBtn">Open</button>
-<div class="form-group" style="margin-top:16px"><label class="label">Label (optional — applied when authorization completes)</label><input class="input" type="text" id="oauth-modal-label" placeholder="My Tidal" oninput="updateOAuthLabel()"></div>
+<div class="form-group" style="margin-top:16px"><label class="label">Label (optional — applied when authorization completes)</label><input class="input" type="text" name="oauth-label" autocomplete="off" spellcheck="false" id="oauth-modal-label" placeholder="My Tidal…" oninput="updateOAuthLabel()"></div>
 <p style="margin-top:16px;color:#8b949e;font-size:13px" id="oauthStatus">Waiting for authorization...</p>
 <div class="modal-actions">
 <button class="button" onclick="closeOAuth()">Cancel</button>
@@ -411,11 +427,11 @@ section[id] { scroll-margin-top:18px; }
 <div id="editOverlay" class="overlay" onclick="if(event.target===this)closeEdit()">
 <div class="sheet">
 <h3 id="editTitle">Edit Account</h3>
-<div class="form-group"><label class="label">Label</label><input class="input" type="text" id="ed-label"></div>
-<div class="form-group"><label class="label">User ID</label><input class="input" type="text" id="ed-user-id"></div>
-<div class="form-group"><label class="label">Client ID</label><input class="input" type="text" id="ed-client-id"></div>
-<div class="form-group"><label class="label">Client Secret</label><div class="pw-wrap"><input class="input" type="password" id="ed-client-secret"><button type="button" class="pw-toggle" onclick="togglePw('ed-client-secret', this)" title="Show/hide">&#128065;</button></div></div>
-<div class="form-group"><label class="label">Refresh Token</label><div class="pw-wrap"><input class="input" type="password" id="ed-refresh-token"><button type="button" class="pw-toggle" onclick="togglePw('ed-refresh-token', this)" title="Show/hide">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Label</label><input class="input" type="text" name="label" autocomplete="off" spellcheck="false" id="ed-label" onkeydown="if(event.key==='Enter'){saveEdit()}"></div>
+<div class="form-group"><label class="label">User ID</label><input class="input" type="text" name="user-id" autocomplete="off" spellcheck="false" id="ed-user-id" onkeydown="if(event.key==='Enter'){saveEdit()}"></div>
+<div class="form-group"><label class="label">Client ID</label><input class="input" type="text" name="client-id" autocomplete="off" spellcheck="false" id="ed-client-id" onkeydown="if(event.key==='Enter'){saveEdit()}"></div>
+<div class="form-group"><label class="label">Client Secret</label><div class="pw-wrap"><input class="input" type="password" name="client-secret" autocomplete="new-password" spellcheck="false" id="ed-client-secret" onkeydown="if(event.key==='Enter'){saveEdit()}"><button type="button" class="pw-toggle" onclick="togglePw('ed-client-secret', this)" title="Show/hide" aria-label="Show or hide client secret">&#128065;</button></div></div>
+<div class="form-group"><label class="label">Refresh Token</label><div class="pw-wrap"><input class="input" type="password" name="refresh-token" autocomplete="off" spellcheck="false" id="ed-refresh-token" onkeydown="if(event.key==='Enter'){saveEdit()}"><button type="button" class="pw-toggle" onclick="togglePw('ed-refresh-token', this)" title="Show/hide" aria-label="Show or hide refresh token">&#128065;</button></div></div>
 <div class="modal-actions">
 <button class="button is-primary" onclick="saveEdit()">Save</button>
 <button class="button" onclick="closeEdit()">Cancel</button>
@@ -450,13 +466,18 @@ if (!adminKey) setKey();
 
 function relAgo(ts) {
     if (!ts || ts <= 0) return 'never';
-    var s = Math.floor(Date.now() / 1000) - ts;
-    if (s < 90) return 'just now';
-    var m = Math.floor(s / 60);
-    if (m < 60) return m + 'm ago';
-    var h = Math.floor(m / 60);
-    if (h < 48) return h + 'h ago';
-    return Math.floor(h / 24) + 'd ago';
+    try {
+        var rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+        var s = Math.floor(Date.now() / 1000) - ts;
+        if (s < 90) return 'just now';
+        var m = Math.floor(s / 60);
+        if (m < 60) return rtf.format(-m, 'minute');
+        var h = Math.floor(m / 60);
+        if (h < 48) return rtf.format(-h, 'hour');
+        return rtf.format(-Math.floor(h / 24), 'day');
+    } catch (e) {
+        return new Date(ts * 1000).toLocaleString();
+    }
 }
 
 function timeStr(ts) {
@@ -509,7 +530,7 @@ async function testAll() {
         return;
     }
     var btn = document.getElementById('testAllBtn');
-    btn.textContent = 'Testing...';
+    btn.textContent = 'Testing…';
     btn.disabled = true;
     try {
         var res = await fetch('/admin/accounts/test-all', { method: 'POST', headers: headers() });
@@ -548,18 +569,17 @@ function renderTestResults(results) {
         var httpText = r.status_code || '-';
         var tokenStr = r.token_expires_at ? timeStr(r.token_expires_at) : '-';
         var premText = r.premium ? esc(r.premium) : '-';
-        html += '<div class="test-result-row" onclick="showTestDetails(\'' + id + '\')">';
+        html += '<button type="button" class="test-result-row" onclick="showTestDetails(\'' + id + '\')">';
         html += '<span class="result-label">' + label + '</span>';
         html += '<span class="result-status ' + statusClass + '">' + statusText + '</span>';
         html += '<span class="result-http">' + httpText + '</span>';
         html += '<span class="result-ms">' + msText + '</span>';
         html += '<span class="result-premium">' + premText + '</span>';
         html += '<span class="result-token">' + tokenStr + '</span>';
-        html += '</div>';
+        html += '</button>';
         var badge = document.getElementById('test-' + id);
         if (badge) {
-            badge.className = r.ok ? 'card-stat test-pass' : 'card-stat test-fail';
-            badge.innerHTML = 'Test <strong>' + (r.ok ? 'OK ' + r.ms + 'ms' : 'FAIL ' + (r.error || '')) + '</strong>';
+            badge.outerHTML = '<button type="button" class="card-stat test-badge" id="test-' + id + '" onclick="showTestDetails(\'' + id + '\')">Test <strong>' + (r.ok ? 'OK ' + r.ms + 'ms' : 'FAIL ' + (r.error || '')) + '</strong></button>';
         }
     }
     document.getElementById('testResultsList').innerHTML = html;
@@ -648,6 +668,7 @@ function showTestDetails(id) {
     }
     document.getElementById('testDetailsContent').innerHTML = html;
     document.getElementById('testOverlay').classList.add('open');
+    focusFirst('testOverlay', null);
 }
 
 function closeTestDetails() {
@@ -657,11 +678,12 @@ function closeTestDetails() {
 function trunc(s, n) {
     if (!s) return '';
     n = n || 40;
-    return s.length > n ? s.slice(0, n) + '...' : s;
+    return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
 function openEdit(id) {
     editId = id;
+    editDirty = false;
     var a = window._accounts.find(function(x) { return x.id === id; });
     if (!a) return;
     document.getElementById('ed-label').value = a.label || '';
@@ -671,10 +693,12 @@ function openEdit(id) {
     document.getElementById('ed-refresh-token').value = a.refresh_token || '';
     document.getElementById('editTitle').textContent = 'Edit ' + (a.label || a.id.slice(0, 8));
     document.getElementById('editOverlay').classList.add('open');
+    focusFirst('editOverlay', 'ed-label');
 }
 
 function closeEdit() {
     editId = null;
+    editDirty = false;
     document.getElementById('editOverlay').classList.remove('open');
 }
 
@@ -792,7 +816,7 @@ async function fetchData() {
                             '<span class="card-stat">Premium <strong>' + esc(a.premium_status || 'unknown') + '</strong>' + (a.premium_checked_at > 0 ? ' (' + relAgo(a.premium_checked_at) + ')' : '') + '</span>' +
                             (a.auto_disabled ? '<span class="card-stat">Auto-heal <strong>retrying</strong></span>' : '') +
                             '<span class="card-stat">Token <strong>' + tokenStr + '</strong></span>' +
-                            '<span class="card-stat test-badge" id="test-' + a.id + '" onclick="showTestDetails(\'' + a.id + '\')">Test <strong>-</strong></span>' +
+                            '<button type="button" class="card-stat test-badge" id="test-' + a.id + '" onclick="showTestDetails(\'' + a.id + '\')">Test <strong>-</strong></button>' +
                         '</div>' +
                     '</div>' +
                 '</div>';
@@ -948,6 +972,7 @@ function startOAuth() {
     document.getElementById('oauthUrl').textContent = 'Starting...';
     document.getElementById('oauthStatus').textContent = 'Contacting Tidal...';
     document.getElementById('oauthOverlay').classList.add('open');
+    focusFirst('oauthOverlay', 'oauth-modal-label');
     var lbl = (document.getElementById('new-label').value || '').trim();
     fetch('/admin/setup', { method: 'POST', headers: headers(), body: JSON.stringify({ label: lbl || null }) })
         .then(function(r) {
@@ -1174,7 +1199,7 @@ async function restoreBackup(e) {
 }
 
 async function clearCache() {    var btn = document.getElementById('clearCacheBtn');
-    btn.textContent = 'Clearing...';
+    btn.textContent = 'Clearing…';
     btn.disabled = true;
     try {
         var res = await fetch('/admin/cache/clear', { method: 'POST', headers: headers() });
@@ -1191,6 +1216,57 @@ async function clearCache() {    var btn = document.getElementById('clearCacheBt
         btn.textContent = 'Clear Cache';
         btn.disabled = false;
     }
+}
+
+// Keyboard: Escape closes any open modal; focus moves inside on open.
+document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape' && e.key !== 'Esc') return;
+    var changed = false;
+    for (var id of ['oauthOverlay', 'editOverlay', 'testOverlay']) {
+        var el = document.getElementById(id);
+        if (el && el.classList.contains('open')) { el.classList.remove('open'); changed = true; }
+    }
+    if (changed) { editDirty = false; e.preventDefault(); }
+});
+
+// Log filter (?log=errors|slow|all): init from URL once, keep in sync.
+(function initLogFilter() {
+    try {
+        var v = new URLSearchParams(location.search).get('log');
+        if (v === 'errors' || v === 'slow' || v === 'all') {
+            var sel = document.getElementById('rq-filter');
+            if (sel) sel.value = v;
+        }
+    } catch (e) {}
+})();
+function syncLogFilter(sel) {
+    try {
+        var u = new URL(location.href);
+        u.searchParams.set('log', sel.value);
+        history.replaceState(null, '', u);
+    } catch (e) {}
+    loadRequestLog();
+}
+
+// Dirty-edit guard: warn before leaving with unsaved account edits.
+var editDirty = false;
+try {
+    document.getElementById('editOverlay').addEventListener('input', function() { editDirty = true; });
+} catch (e) {}
+window.addEventListener('beforeunload', function(e) {
+    var open = false;
+    try { open = document.getElementById('editOverlay').classList.contains('open'); } catch (err) {}
+    if (editDirty && open) { e.preventDefault(); e.returnValue = ''; }
+});
+
+function focusFirst(overlayId, controlId) {
+    try {
+        var c = controlId && document.getElementById(controlId);
+        if (c && c.focus) { c.focus(); return; }
+        var o = document.getElementById(overlayId);
+        var b = o && o.querySelector('button');
+        if (b) b.focus();
+    } catch(e) {}
 }
 
 async function loadCacheStats() {
@@ -1255,7 +1331,7 @@ async function loadRequestLog() {
             var t = '';
             if (q.ts) {
                 var d = new Date(q.ts * 1000);
-                t = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+                try { t = d.toLocaleTimeString([], { hour12: false }); } catch (e) { t = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
             }
             rows += '<div class="term-line"><span class="term-time">' + t + '</span> ' +
                 '<span class="term-method m-' + q.method + '">' + q.method + '</span> ' +
@@ -1268,7 +1344,7 @@ async function loadRequestLog() {
         var box = document.getElementById('rq-recent');
         if (rows) {
             box.innerHTML = rows + '<div class="term-line"><span class="term-dim">$</span> <span class="term-cursor"></span></div>';
-            box.scrollTop = box.scrollHeight;
+            box.scrollTop = 1e9; /* write-only: clamps to max, no layout read */
         } else {
             box.innerHTML = '<div class="term-line"><span class="term-dim">$ waiting for traffic…</span> <span class="term-cursor"></span></div>';
         }
