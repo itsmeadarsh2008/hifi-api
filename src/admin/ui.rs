@@ -171,6 +171,17 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 .term-body::-webkit-scrollbar { width:8px; }
 .term-body::-webkit-scrollbar-thumb { background:#1d3a24; border-radius:4px; }
 .term-line { white-space:nowrap; }
+.log-row { border-bottom:1px solid #142114; }
+.log-main { display:flex; align-items:center; gap:10px; width:100%; background:none; border:none; font:inherit; color:inherit; text-align:left; padding:7px 14px; cursor:pointer; }
+.log-main:hover { background:rgba(63,185,80,0.05); }
+.log-main:focus-visible { outline:2px solid #1f6feb; outline-offset:-2px; }
+.log-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.log-dot.ok { background:#3fb950; box-shadow:0 0 6px rgba(63,185,80,.6); }
+.log-dot.warn { background:#d29922; box-shadow:0 0 6px rgba(210,153,34,.6); }
+.log-dot.err { background:#f85149; box-shadow:0 0 6px rgba(248,81,73,.6); }
+.log-summary { color:#e6f5ea; font-weight:600; }
+.log-meta { margin-left:auto; color:#5f6f60; font-size:11px; white-space:nowrap; padding-left:12px; }
+.log-detail { display:none; padding:2px 14px 9px 32px; color:#5f6f60; font-size:11px; }
 .term-time { color:#4a5a4c; }
 .term-method { font-weight:700; }
 .m-GET { color:#3fb950; }
@@ -211,7 +222,7 @@ body { font-family:'SF Mono','Fira Code','Cascadia Code','JetBrains Mono',Menlo,
 <span id="rq-err-endpoints" style="color:#f85149"></span>
 <span id="rq-slowest" style="color:#d29922"></span>
 <span id="rq-tracks" style="color:#d2a8ff"></span>
-<span style="margin-left:auto"><label style="font-size:11px;color:#8b949e">filter <select id="rq-filter" onchange="loadRequestLog()" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:11px"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></label></span>
+<span style="margin-left:auto"><label style="font-size:11px;color:#8b949e">filter <select id="rq-filter" onchange="loadRequestLog()" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:11px"><option value="all">all</option><option value="errors">errors</option><option value="slow">slow</option></select></label> <input id="rq-search" placeholder="Search…" title="Filter rows by endpoint, id or status" aria-label="Filter log rows" oninput="renderLogRows()" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:11px;padding:2px 6px;width:110px"></span>
 </div>
 <div id="rq-recent" class="term-body"></div>
 </div>
@@ -1135,11 +1146,91 @@ async function loadCacheStats() {
     } catch(e) {}
 }
 
+function humanEndpoint(path, detail) {
+    var map = {
+        '/track/': 'Track playback',
+        '/trackManifests/:id': 'Manifest',
+        '/dash/:id': 'DASH stream',
+        '/info/': 'Track info',
+        '/search/': 'Search',
+        '/album/': 'Album',
+        '/artist/': 'Artist',
+        '/playlist/': 'Playlist',
+        '/mix/': 'Mix',
+        '/cover/': 'Cover art',
+        '/lyrics/': 'Lyrics',
+        '/video/': 'Video',
+        '/widevine': 'DRM license',
+        '/recommendations/': 'Recommendations',
+        '/topvideos/': 'Top videos',
+        '/health': 'Health check',
+        '/': 'Index'
+    };
+    if (path && path.indexOf('/admin') === 0) {
+        var rest = path.slice(6) || '/';
+        return 'Admin ' + (rest === '/' ? 'panel' : rest.replace(/^\//, ''));
+    }
+    return map[path] || path || 'Request';
+}
+
+function humanStatus(status) {
+    if (status < 400) return { word: 'ok', dot: 'ok' };
+    if (status === 404) return { word: 'not found', dot: 'warn' };
+    if (status === 429) return { word: 'throttled — retrying', dot: 'warn' };
+    if (status >= 500) return { word: 'upstream error', dot: 'err' };
+    return { word: 'rejected (' + status + ')', dot: 'warn' };
+}
+
+function toggleLogRow(el) {
+    var d = el.nextElementSibling;
+    if (d && d.classList && d.classList.contains('log-detail')) {
+        var open = (d.style.display === 'none' || !d.style.display);
+        d.style.display = open ? 'block' : 'none';
+        try { el.setAttribute('aria-expanded', open ? 'true' : 'false'); } catch(e) {}
+    }
+}
+
+function renderLogRows() {
+    var r = window._rq || {};
+    var box = document.getElementById('rq-recent');
+    if (!box) return;
+    var filter = 'all', query = '';
+    try { filter = document.getElementById('rq-filter').value || 'all'; } catch(e) {}
+    try { query = (document.getElementById('rq-search').value || '').trim().toLowerCase(); } catch(e2) {}
+    var rows = '';
+    var shown = 0;
+    var total = (r.recent || []).length;
+    for (var q of (r.recent || [])) {
+        if (filter === 'errors' && !(q.status >= 400)) continue;
+        if (filter === 'slow' && !q.slow && !(q.latency_ms >= 3000)) continue;
+        var hay = ((q.path || '') + ' ' + (q.detail || '') + ' ' + q.status).toLowerCase();
+        if (query && hay.indexOf(query) === -1) continue;
+        if (++shown > 200) break;
+        var st = humanStatus(q.status);
+        var subj = q.detail ? (q.path === '/search/' ? ' \u201c' + q.detail + '\u201d' : ' #' + q.detail) : '';
+        var when = q.ts ? relAgo(q.ts) : '';
+        rows += '<div class="log-row"><button type="button" class="log-main" onclick="toggleLogRow(this)" aria-expanded="false">'
+            + '<span class="log-dot ' + st.dot + '"></span>'
+            + '<span class="log-summary">' + esc(humanEndpoint(q.path)) + esc(subj) + '</span>'
+            + '<span class="log-meta">' + esc(st.word) + ' · ' + q.latency_ms + 'ms · ' + when + (q.cache ? ' · [' + esc(q.cache) + ']' : '') + '</span></button>'
+            + '<div class="log-detail" style="display:none">' + esc(q.method) + ' ' + esc(q.path) + ' → ' + q.status + ' · ' + q.latency_ms + 'ms · ' + esc(q.client_ip) + (q.cache ? ' · cache ' + esc(q.cache) : '') + '</div></div>';
+    }
+    if (rows) {
+        box.innerHTML = rows;
+        box.scrollTop = 1e9;
+    } else if (total > 0) {
+        box.innerHTML = '<div class="term-line"><span class="term-dim">$ no rows match — clear search or filter…</span></div>';
+    } else {
+        box.innerHTML = '<div class="term-line"><span class="term-dim">$ waiting for traffic…</span> <span class="term-cursor"></span></div>';
+    }
+}
+
 async function loadRequestLog() {
     try {
-        var res = await fetch('/admin/requests?limit=20', { headers: headers() });
+        var res = await fetch('/admin/requests?limit=100', { headers: headers() });
         if (!res.ok) return;
-        var r = (await res.json()).requests || {};
+        window._rq = (await res.json()).requests || {};
+        var r = window._rq;
         document.getElementById('rq-total').textContent = r.total != null ? r.total : '—';
         document.getElementById('rq-errors').textContent = r.errors != null ? r.errors : '—';
         document.getElementById('rq-user-errors').textContent = r.user_errors != null ? r.user_errors : '—';
@@ -1172,33 +1263,7 @@ async function loadRequestLog() {
             sw += '<span>' + esc(s.endpoint) + (s.detail ? ' #' + esc(s.detail) : '') + ' <strong>' + s.latency_ms + 'ms</strong></span>';
         }
         document.getElementById('rq-slowest').innerHTML = sw ? '<span style="color:#5f6f60">slowest:</span> ' + sw : '';
-        var rows = '';
-        var filter = 'all';
-        try { filter = document.getElementById('rq-filter').value || 'all'; } catch(e) {}
-        for (var q of (r.recent || [])) {
-            if (filter === 'errors' && !(q.status >= 400)) continue;
-            if (filter === 'slow' && !q.slow && !(q.latency_ms >= 3000)) continue;
-            var cls = q.status >= 500 ? 'test-fail' : (q.status >= 400 ? 'test-pending' : 'test-pass');
-            var t = '';
-            if (q.ts) {
-                var d = new Date(q.ts * 1000);
-                t = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
-            }
-            rows += '<div class="term-line"><span class="term-time">' + t + '</span> ' +
-                '<span class="term-method m-' + q.method + '">' + q.method + '</span> ' +
-                '<span class="term-path">' + esc(q.path) + '</span>' +
-                (q.detail ? ' <span class="term-id">#' + esc(q.detail) + '</span>' : '') + ' ' +
-                '<span class="' + cls + '">' + q.status + '</span> ' +
-                (q.cache ? '<span class="term-cache">[' + esc(q.cache) + ']</span> ' : '') +
-                '<span class="term-dim"' + (q.slow ? ' style="color:#d29922"' : '') + '>' + q.latency_ms + 'ms ' + esc(q.client_ip) + '</span></div>';
-        }
-        var box = document.getElementById('rq-recent');
-        if (rows) {
-            box.innerHTML = rows + '<div class="term-line"><span class="term-dim">$</span> <span class="term-cursor"></span></div>';
-            box.scrollTop = box.scrollHeight;
-        } else {
-            box.innerHTML = '<div class="term-line"><span class="term-dim">$ waiting for traffic…</span> <span class="term-cursor"></span></div>';
-        }
+        renderLogRows();
     } catch(e) {}
 }
 
