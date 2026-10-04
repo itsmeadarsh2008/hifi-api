@@ -130,6 +130,18 @@ docker run -d -p 8000:8000 \
   hifi-api
 ```
 
+### VPS (both fleets + HTTPS)
+
+`compose.vps.yml` runs the public fleet, the private fleet, and Caddy (automatic HTTPS + routing) on one host:
+
+```bash
+cp .env.vps.example .env.vps  # fill secrets, never commit
+# Point DNS A records at the server, one per fleet in .env.vps
+docker compose -f compose.vps.yml --env-file .env.vps up -d
+```
+
+Each fleet gets its own subdomain, volume, admin key, and pool (`USE=public` → shared-Redis db 1, `USE=private` → db 0); accounts restore from Redis on first boot, nothing to import. App ports stay localhost-only — only Caddy's 80/443 face the network. **Adding a subdomain later:** add its DNS A record, copy one block in `Caddyfile` (+ a service in `compose.vps.yml` if it needs a container), then `up -d caddy` — certificates are automatic.
+
 ### Admin Panel
 
 Access at `/admin`. If `ADMIN_KEY` is set, include the header `X-Admin-Key: <your_key>`. When empty, the panel is open.

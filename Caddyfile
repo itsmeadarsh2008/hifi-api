@@ -1,0 +1,41 @@
+# Caddy front door for the VPS stack.
+#
+# Each fleet gets its own name with automatic HTTPS. The {$VAR} placeholders
+# come from .env.vps (same file as compose.vps.yml).
+#
+# Adding a subdomain later:
+#   1. Add a DNS A record for the name pointing at this server.
+#   2. Copy one block below, change the name and the reverse_proxy target
+#      (add a matching service to compose.vps.yml if it needs a container).
+#   3. docker compose -f compose.vps.yml --env-file .env.vps up -d caddy
+#      Caddy notices the new name and fetches its certificate by itself.
+{
+	# Uncomment to get ACME rate-limit notices (also visible in `docker compose logs caddy`).
+	# email you@example.com
+}
+
+{$PUBLIC_DOMAIN} {
+	reverse_proxy hifi-public:8000 {
+		# Pull unhealthy backends out of rotation automatically.
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+	}
+}
+
+{$PRIVATE_DOMAIN} {
+	reverse_proxy hifi-private:8000 {
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+	}
+}
+
+# --- Example: extra subdomain (uncomment + edit) ---
+# newservice.example.com {
+# 	reverse_proxy newservice:8000 {
+# 		health_uri /health
+# 		health_interval 30s
+# 		health_timeout 5s
+# 	}
+# }

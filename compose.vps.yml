@@ -1,0 +1,73 @@
+# Production VPS stack: both hifi-api fleets + Caddy (TLS + routing).
+#
+# Usage (on the VPS):
+#   1. cp .env.vps.example .env.vps   # fill secrets; never commit (gitignored)
+#   2. Point DNS A records at this server, one per fleet below.
+#   3. docker compose -f compose.vps.yml --env-file .env.vps up -d
+#   4. Check https://<your-domain>/health, then the admin panel.
+#
+# Adding a subdomain later:
+#   1. Add its DNS A record → this server.
+#   2. Add one block for it in Caddyfile (+ a service here if it needs one).
+#   3. docker compose -f compose.vps.yml --env-file .env.vps up -d caddy
+#      (Caddy picks up the new name and issues its certificate automatically.)
+#
+# Notes:
+# - App containers expose NO host ports: only Caddy (ports 80/443) is
+#   reachable from the network; Caddy reaches apps over the compose network.
+# - Each fleet has its own volume + credentials: never share a DB file.
+# - First boot restores accounts automatically from REDIS_POOL
+#   (USE=public → db 1, USE=private → db 0); nothing manual to import.
+name: hifi
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  hifi-public:
+    image: ghcr.io/itsmeadarsh2008/hifi-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - hifi-public-data:/data
+    environment:
+      DATABASE_URL: /data/hifi.db
+      ADMIN_KEY: ${PUBLIC_ADMIN_KEY:?PUBLIC_ADMIN_KEY is required in .env.vps}
+      REDIS_POOL: ${REDIS_POOL:?REDIS_POOL is required in .env.vps}
+      USE: public
+      COUNTRY_CODE: ${COUNTRY_CODE:-US}
+      AUTO_SETUP: "false"
+      TRUST_PROXY_HEADERS: "true"
+      RUST_LOG: ${RUST_LOG:-info}
+
+  hifi-private:
+    image: ghcr.io/itsmeadarsh2008/hifi-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - hifi-private-data:/data
+    environment:
+      DATABASE_URL: /data/hifi.db
+      ADMIN_KEY: ${PRIVATE_ADMIN_KEY:?PRIVATE_ADMIN_KEY is required in .env.vps}
+      REDIS_POOL: ${REDIS_POOL:?REDIS_POOL is required in .env.vps}
+      USE: private
+      COUNTRY_CODE: ${COUNTRY_CODE:-US}
+      AUTO_SETUP: "false"
+      TRUST_PROXY_HEADERS: "true"
+      RUST_LOG: ${RUST_LOG:-info}
+
+volumes:
+  hifi-public-data:
+  hifi-private-data:
+  caddy-data:
+  caddy-config:
