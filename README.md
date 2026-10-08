@@ -186,6 +186,7 @@ What gets shared:
 | Tidal access tokens | Shared on refresh, reused on miss (no cross-host refresh stampedes) |
 | API-key usage quotas | Fire-and-forget `INCR` per use, reconciled into the local counter every 60s |
 | Account credentials | Write-through on add/edit/toggle/catalog-flag; union-merged at startup + every 60s (newest `updated_at` wins, live counters and catalog flags preserved) — a wiped host restores its accounts from Redis; explicit deletes stay deleted; backup restores win via republish |
+| Fleet stats heartbeat | Every instance publishes `hifi:stats:<instance-id>` (`total`/`active`/`premium`/`at`, 180s TTL) on boot + every 60s; pool dashboards read the freshest record — same numbers as `/admin/stats` |
 | API-key definitions | Same pattern (hashes/flags/quota only — raw keys are never stored anywhere) |
 
 Without these vars everything stays local (today's single-host behavior). All Redis calls are fail-open with short timeouts: if Redis is unreachable the instance keeps serving from local state. Intentionally **not** synced: the metadata response cache (per-host L1), request log, proxy state. Note that anyone holding the Redis REST token can read the backed-up Tidal credentials — guard it like database access.
