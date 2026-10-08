@@ -708,6 +708,21 @@ impl UpstashStore {
     pub fn k_apikeys_set() -> String {
         format!("{PREFIX}:apikeys")
     }
+
+    // --- fleet stats heartbeat (pool dashboards) ---
+    // Each instance publishes hifi:stats:<instance_id> =
+    // {"id","total","active","premium","at"} with a short TTL and indexes
+    // itself in the hifi:stats set. Readers take the freshest record and
+    // ignore (then unindex) stale or missing ones, so dead instances fade
+    // out without any cleanup job.
+
+    pub fn k_stats_set() -> String {
+        format!("{PREFIX}:stats")
+    }
+
+    pub fn k_stats(instance_id: &str) -> String {
+        format!("{PREFIX}:stats:{instance_id}")
+    }
 }
 
 #[cfg(test)]

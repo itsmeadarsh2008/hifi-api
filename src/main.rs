@@ -242,6 +242,22 @@ async fn main() {
         });
     }
 
+    // Publish fleet stats heartbeat for pool dashboards (60s, plus once at
+    // startup so numbers appear without waiting). Best-effort: no store or
+    // unreachable Redis simply skips.
+    {
+        let am = account_manager.clone();
+        let store = upstash.clone();
+        tokio::spawn(async move {
+            crate::admin::stats::publish_heartbeat(&am, store.clone()).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                crate::admin::stats::publish_heartbeat(&am, store.clone()).await;
+            }
+        });
+    }
+
     let notifier = notifier::Notifier::new(config.discord_webhook_url.clone());
 
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
