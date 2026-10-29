@@ -258,8 +258,14 @@ async fn main() {
         });
     }
 
+    // Premium sweep: premium verdicts live only in memory, so a restart
+    // zeroes the fleet's premium counts until someone re-probes. Rebuild
+    // them quietly: every few minutes pick a small batch of active accounts
+    // whose status is still "unknown" and probe them sequentially (same
+    // display-only semantics as the admin probe — no flags touched). After
+    // a restart this repopulates the counts within ~a tick per batch; when
+    // nothing is unknown the task idles without touching Tidal.
     let notifier = notifier::Notifier::new(config.discord_webhook_url.clone());
-
     let tidal_client = Arc::new(tidal_client::TidalClient::new(
         proxy_manager.clone(),
         token_manager.clone(),
@@ -267,6 +273,44 @@ async fn main() {
         notifier.clone(),
         config.clone(),
     ));
+    {
+        let am = account_manager.clone();
+        let tc = tidal_client.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                5 * 60,
+            ));
+            loop {
+                interval.tick().await;
+                let batch: Vec<_> = am
+                    .list_accounts()
+                    .await
+                    .into_iter()
+                    .filter(|a| {
+                        a.is_active.load(std::sync::atomic::Ordering::Relaxed)
+                            && a.premium_status
+                                .try_read()
+                                .map(|s| s.as_str() == "unknown")
+                                .unwrap_or(false)
+                    })
+                    .take(10)
+                    .collect();
+                for acc in batch {
+                    let (status, reason) = tc.probe_account_premium(&acc).await;
+                    am.set_premium(&acc.id, &status).await;
+                    if status != "premium" {
+                        tracing::debug!(
+                            account = %acc.id,
+                            %status,
+                            %reason,
+                            "premium sweep verdict"
+                        );
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        });
+    }
 
     let state = AppState {
         config: config.clone(),
