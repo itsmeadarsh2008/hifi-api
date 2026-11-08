@@ -17,6 +17,7 @@ track's availability and your account/client entitlement:
 | `LOSSLESS` / `FLAC` | FLAC-in-fMP4 | 16-bit / 44.1 kHz | CD quality. |
 | `FLAC_HIRES` | FLAC-in-fMP4 | 24-bit / 96–192 kHz (e.g. 176.4 kHz) | Only on tracks tagged `HIRES_LOSSLESS`; client must be entitled. |
 | `EAC3_JOC` | E-AC-3 (Dolby Atmos) | 48 kHz, 5.1/7.1 bed + JOC objects | Only on tracks tagged `DOLBY_ATMOS`; client must be entitled. |
+| `AC4` | AC-4 IMS (Dolby Atmos) | ~256–768 kbps, pre-binauralized stereo | Headphone playback on supported mobile devices; client must be entitled. |
 
 Tidal silently drops formats you aren't entitled to when multiple are requested,
 and returns `403 CLIENT_NOT_ENTITLED` if you request only unentitled ones.
@@ -43,7 +44,7 @@ the track supports (`LOSSLESS`, `HIRES_LOSSLESS`, `DOLBY_ATMOS`).
 ## 3. Method A — `/dash/{id}` (recommended, highest quality)
 
 Returns a **302 redirect** to a fresh Tidal DASH manifest, requesting
-`FLAC_HIRES,FLAC,EAC3_JOC,AACLC` in that priority order:
+`FLAC_HIRES,FLAC,EAC3_JOC,AC4,AACLC` in that priority order (Atmos pair first when preferred):
 
 ```bash
 curl -s -D - -o /dev/null "http://localhost:8000/dash/1781887"
@@ -91,7 +92,7 @@ Query parameters (all optional):
 
 | Param | Default | Notes |
 |---|---|---|
-| `formats` | `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC` | Comma-separated. Unentitled ones are dropped. |
+| `formats` | `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC,AC4` | Comma-separated. Unentitled ones are dropped. |
 | `adaptive` | `true` | Multi-format response. |
 | `manifestType` | `MPEG_DASH` | `MPEG_DASH` or `HLS`. |
 | `uriScheme` | `HTTPS` | `HTTPS` = manifest link, `DATA` = inline base64. |
@@ -152,7 +153,8 @@ print(m['urls'][0])        # direct .mp4 URL, token expires ~1h
   don't cache the redirect target.
 - **Atmos rendering.** The `EAC3_JOC` stream's object metadata (JOC) is only
   rendered by a Dolby Atmos renderer (e.g. Android TV via ExoPlayer). mpv/VLC
-  decode the E-AC-3 5.1/7.1 bed layer.
+  decode the E-AC-3 5.1/7.1 bed layer. The `AC4` (IMS) stream is pre-binauralized
+  stereo for headphones on supported mobile devices and needs an AC-4 decoder.
 - **High sample rates** (176.4/192 kHz) decode fine in ffmpeg-based players;
   final output may be resampled by your sound server/DAC.
 - **DRM:** tracks whose manifest includes `drmData` (Widevine) require the

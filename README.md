@@ -82,7 +82,7 @@ The `CLIENT_ID` and `CLIENT_SECRET` above are Tidal's public OAuth credentials. 
 | `USER_AGENT` | `okhttp/5.3.2` | Upstream User-Agent override |
 | `DEV_MODE` | `false` | Verbose upstream logging (status + body preview) |
 | `AUTO_HEAL` | `true` | Retry system-disabled accounts with backoff (never touches manual OFF; editable in admin panel) |
-| `ATMOS_MODE` | `prefer` | Default Atmos preference for manifests/dash: `prefer` (EAC3_JOC first) or `off` (FLAC first); `?atmos=` overrides per request |
+| `ATMOS_MODE` | `prefer` | Default Atmos preference for manifests/dash: `prefer` (EAC3_JOC, AC4 first) or `off` (FLAC first); `?atmos=` overrides per request |
 | `TRUST_PROXY_HEADERS` | `true` | Use `X-Forwarded-For`/`X-Real-IP` for client IP (set to `false` for direct connections) |
 | `DISCORD_WEBHOOK_URL` | (none) | Discord webhook for 403/all-down alerts (empty = disabled, test in panel) |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | (none) | Shared cross-instance state via Upstash Redis (empty = single-host mode). See [Multi-instance sync](#multi-instance-sync) |
@@ -203,7 +203,7 @@ Tidal appears to region lock by account, not by countryCode. Nevertheless, count
 
 Usually, tracks that support Atmos will have `DOLBY_ATMOS` in `mediaMetadata.tags`. To request Dolby Atmos tracks, use the new `trackManifests` endpoint - see its spec for more info on Atmos.
 
-Control preference with `?atmos=true|only|off` on `/trackManifests` and `/dash` (server default via `ATMOS_MODE=prefer`, overridable per request). Responses include a top-level `atmos_available` flag when the manifest actually carries an `EAC3_JOC` rendition. Note: Atmos needs a Dolby-capable player plus a Widevine license (proxied through `/widevine`); most browsers can't play EAC-3 JOC, so pass `?atmos=off` for plain FLAC.
+Control preference with `?atmos=true|only|off` on `/trackManifests` and `/dash` (server default via `ATMOS_MODE=prefer`, overridable per request). Responses include a top-level `atmos_available` flag when the manifest actually carries an Atmos rendition (`EAC3_JOC` for speakers/TV, `AC4` for headphone/binaural on supported mobile devices). Note: Atmos needs a Dolby-capable player plus a Widevine license (proxied through `/widevine`); most browsers can't play EAC-3 JOC or AC-4, so pass `?atmos=off` for plain FLAC.
 
 ## API Schema
 
@@ -422,13 +422,13 @@ GET /trackManifests/?id=192157851&formats=FLAC_HIRES&formats=FLAC
 #### Params
 
 - `id`: `str` (required, path **or** query) - Tidal track ID.
-- `formats`: `str` (optional, default `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC`) - Requested audio formats. Accepts comma-separated (`?formats=FLAC,FLAC_HIRES`) or repeated (`?formats=FLAC&formats=FLAC_HIRES`).
+- `formats`: `str` (optional, default `HEAACV1,AACLC,FLAC,FLAC_HIRES,EAC3_JOC,AC4`) - Requested audio formats. Accepts comma-separated (`?formats=FLAC,FLAC_HIRES`) or repeated (`?formats=FLAC&formats=FLAC_HIRES`).
 - `adaptive`: `str` (optional, default `true`) - Adaptive streaming (where multiple formats are returned in one response).
 - `manifestType`: `str` (optional, default `MPEG_DASH`, options `MPEG_DASH`, `HLS`) - Manifest type.
 - `uriScheme`: `str` (optional, default `HTTPS`, options `HTTPS`, `DATA`) - URI scheme. DATA returns everything in base64, HTTPS returns a link to the manifest.
 - `usage`: `str` (optional, default `PLAYBACK`, options `PLAYBACK`, `DOWNLOAD`) - Usage type.
 - `countryCode`: `str` (optional, default server `COUNTRY_CODE`) - Override region for this request.
-- `atmos`: `str` (optional, default server `ATMOS_MODE`) - `true`/`prefer` puts `EAC3_JOC` first, `only` requests just it, `off` strips it. Explicit `formats=` are always respected verbatim.
+- `atmos`: `str` (optional, default server `ATMOS_MODE`) - `true`/`prefer` puts `EAC3_JOC,AC4` first, `only` requests just that pair, `off` strips it. Explicit `formats=` are always respected verbatim.
 
 #### Response
 
@@ -507,7 +507,7 @@ mpv --no-ytdl "http://localhost:8000/dash/192157851"
 
 #### Params
 
-- `atmos`: `str` (optional, default server `ATMOS_MODE`) - `true`/`prefer` puts `EAC3_JOC` first, `only` requests just it, `off` strips it (plain `FLAC_HIRES,FLAC,AACLC` chain).
+- `atmos`: `str` (optional, default server `ATMOS_MODE`) - `true`/`prefer` puts `EAC3_JOC,AC4` first, `only` requests just that pair, `off` strips it (plain `FLAC_HIRES,FLAC,AACLC` chain).
 
 Returns `503` when the track is preview-only for all accounts (see [Preview-only tracks](#preview-only-tracks)).
 

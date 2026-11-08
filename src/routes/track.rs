@@ -158,7 +158,7 @@ pub struct TrackManifestsParams {
     #[serde(default)]
     pub countryCode: Option<String>,
     /// Atmos preference: true|prefer|only|off. Overrides the server default.
-    /// Note: EAC3_JOC needs a Dolby-capable player + Widevine license.
+    /// Note: EAC3_JOC/AC4 need a Dolby-capable player + Widevine license.
     #[serde(default)]
     pub atmos: Option<String>,
 }
@@ -187,9 +187,23 @@ pub struct DashParams {
     pub atmos: Option<String>,
 }
 
+/// Tidal's Dolby Atmos playback formats: E-AC-3 JOC (speakers/TV) and
+/// AC-4 IMS (headphone/binaural on supported mobile devices, requested as
+/// `AC4`). `AC4_IMS` is recognized as an alias wherever Atmos is detected
+/// or stripped; explicit `formats=` values always pass through verbatim.
+fn is_atmos_format(f: &str) -> bool {
+    matches!(f, "EAC3_JOC" | "AC4" | "AC4_IMS")
+}
+
+/// Leading Atmos pair for `prefer`/`only` chains (speaker rendition first
+/// for backward compatibility, then the headphone rendition).
+fn atmos_formats() -> Vec<String> {
+    vec!["EAC3_JOC".to_string(), "AC4".to_string()]
+}
+
 /// Resolve the effective format list: explicit `formats=` (comma or
-/// repeated) wins, then Atmos preference moves EAC3_JOC first (`prefer`),
-/// keeps only it (`only`), or strips it (`off`).
+/// repeated) wins, then Atmos preference moves the Atmos pair first
+/// (`prefer`), keeps only it (`only`), or strips it (`off`).
 pub(crate) fn resolve_formats(raw_query: Option<&str>, atmos: Option<&str>, default_prefer: bool) -> Vec<String> {
     let mut explicit: Option<Vec<String>> = None;
     if let Some(q) = raw_query {
@@ -214,11 +228,12 @@ pub(crate) fn resolve_formats(raw_query: Option<&str>, atmos: Option<&str>, defa
         .filter(|s| !s.is_empty());
     match mode.as_deref() {
         // Explicit Atmos-only request.
-        Some("only") => vec!["EAC3_JOC".to_string()],
+        Some("only") => atmos_formats(),
         Some("true") | Some("1") | Some("prefer") => {
             // Ensure Atmos leads (add it if the explicit list lacks it).
             let mut formats = explicit.unwrap_or_else(default_formats);
-            formats.retain(|f| f != "EAC3_JOC");
+            formats.retain(|f| !is_atmos_format(f));
+            formats.insert(0, "AC4".to_string());
             formats.insert(0, "EAC3_JOC".to_string());
             formats
         }
@@ -226,13 +241,14 @@ pub(crate) fn resolve_formats(raw_query: Option<&str>, atmos: Option<&str>, defa
         _ if explicit.is_some() => explicit.unwrap_or_else(default_formats),
         Some("false") | Some("0") | Some("off") => {
             let mut formats = default_formats();
-            formats.retain(|f| f != "EAC3_JOC");
+            formats.retain(|f| !is_atmos_format(f));
             formats
         }
         // No preference expressed: server default.
         _ if default_prefer => {
             let mut formats = default_formats();
-            formats.retain(|f| f != "EAC3_JOC");
+            formats.retain(|f| !is_atmos_format(f));
+            formats.insert(0, "AC4".to_string());
             formats.insert(0, "EAC3_JOC".to_string());
             formats
         }
@@ -253,7 +269,11 @@ pub(crate) fn atmos_default_on(state: &AppState) -> bool {
 fn manifest_has_atmos(result: &Value) -> bool {
     let attrs = result.pointer("/data/data/attributes");
     if let Some(formats) = attrs.and_then(|a| a.get("formats")).and_then(|f| f.as_array()) {
-        if formats.iter().any(|f| f.as_str() == Some("EAC3_JOC")) {
+        if formats
+            .iter()
+            .filter_map(|f| f.as_str())
+            .any(is_atmos_format)
+        {
             return true;
         }
     }
@@ -272,6 +292,7 @@ fn default_formats() -> Vec<String> {
         "FLAC".into(),
         "FLAC_HIRES".into(),
         "EAC3_JOC".into(),
+        "AC4".into(),
     ]
 }
 fn default_adaptive() -> String {
@@ -437,13 +458,14 @@ pub async fn get_track_manifests_query(
 
 #[cfg(test)]
 mod tests {
-    use super::{manifest_matches_track, manifest_track_id, resolve_formats};
+    use super::{manifest_has_atmos, manifest_matches_track, manifest_track_id, resolve_formats};
+    use serde_json::json;
 
     #[test]
-    fn atmos_only_forces_single_format() {
+    fn atmos_only_requests_atmos_pair() {
         assert_eq!(
             resolve_formats(Some("formats=FLAC"), Some("only"), false),
-            vec!["EAC3_JOC".to_string()]
+            vec!["EAC3_JOC".to_string(), "AC4".to_string()]
         );
     }
 
@@ -451,6 +473,7 @@ mod tests {
     fn atmos_prefer_leads_with_eac3() {
         let out = resolve_formats(Some("formats=FLAC,AACLC"), Some("true"), false);
         assert_eq!(out[0], "EAC3_JOC");
+        assert_eq!(out[1], "AC4");
         assert!(out.contains(&"FLAC".to_string()));
         assert!(out.contains(&"AACLC".to_string()));
         // No duplicates.
@@ -458,6 +481,31 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), out.len());
+    }
+
+    #[test]
+    fn defaults_include_ac4_alongside_eac3() {
+        let out = resolve_formats(None, None, false);
+        assert!(out.contains(&"EAC3_JOC".to_string()));
+        assert!(out.contains(&"AC4".to_string()));
+    }
+
+    #[test]
+    fn atmos_prefer_dedupes_explicit_ac4() {
+        let out = resolve_formats(Some("formats=FLAC,AC4"), Some("prefer"), false);
+        assert_eq!(out[0], "EAC3_JOC");
+        assert_eq!(out[1], "AC4");
+        assert_eq!(out.iter().filter(|f| f.as_str() == "AC4").count(), 1);
+    }
+
+    #[test]
+    fn manifest_atmos_detects_ac4_family() {
+        for fmt in ["EAC3_JOC", "AC4", "AC4_IMS"] {
+            let v = json!({"data": {"data": {"attributes": {"formats": [fmt]}}}});
+            assert!(manifest_has_atmos(&v), "expected Atmos for {fmt}");
+        }
+        let v = json!({"data": {"data": {"attributes": {"formats": ["FLAC"]}}}});
+        assert!(!manifest_has_atmos(&v));
     }
 
     #[test]
@@ -470,6 +518,8 @@ mod tests {
     fn atmos_off_strips_from_defaults_only() {
         let out = resolve_formats(None, Some("off"), false);
         assert!(!out.contains(&"EAC3_JOC".to_string()));
+        assert!(!out.contains(&"AC4".to_string()));
+        assert!(!out.contains(&"AC4_IMS".to_string()));
         assert!(out.contains(&"FLAC".to_string()));
         // ...but an explicit request is still honored.
         let out2 = resolve_formats(Some("formats=EAC3_JOC"), Some("off"), false);
@@ -480,8 +530,10 @@ mod tests {
     fn server_default_prefer_mode() {
         let out = resolve_formats(None, None, true);
         assert_eq!(out[0], "EAC3_JOC");
+        assert_eq!(out[1], "AC4");
         let out2 = resolve_formats(None, None, false);
         assert!(out2.contains(&"EAC3_JOC".to_string()));
+        assert!(out2.contains(&"AC4".to_string()));
         assert_ne!(out2[0], "EAC3_JOC");
     }
 
@@ -549,11 +601,11 @@ pub(crate) async fn fetch_dash_uri(
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty());
     let formats = match mode.as_deref() {
-        Some("only") => "EAC3_JOC",
-        Some("true") | Some("1") | Some("prefer") => "EAC3_JOC,FLAC_HIRES,FLAC,AACLC",
+        Some("only") => "EAC3_JOC,AC4",
+        Some("true") | Some("1") | Some("prefer") => "EAC3_JOC,AC4,FLAC_HIRES,FLAC,AACLC",
         Some("false") | Some("0") | Some("off") => "FLAC_HIRES,FLAC,AACLC",
-        _ if atmos_default_on(state) => "EAC3_JOC,FLAC_HIRES,FLAC,AACLC",
-        _ => "FLAC_HIRES,FLAC,EAC3_JOC,AACLC",
+        _ if atmos_default_on(state) => "EAC3_JOC,AC4,FLAC_HIRES,FLAC,AACLC",
+        _ => "FLAC_HIRES,FLAC,EAC3_JOC,AC4,AACLC",
     };
 
     let all_params: Vec<(&str, &str)> = vec![
